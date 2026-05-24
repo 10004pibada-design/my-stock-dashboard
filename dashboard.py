@@ -108,21 +108,4 @@ def create_dashboard():
                            itemStyle: {{ color: '#ef232a', color0: '#14b143', borderColor: '#ef232a', borderColor0: '#14b143' }} }},
                         {{ name: 'MA20', type: 'line', data: chartData.ma20, smooth: true, lineStyle: {{ color: '#e67e22', width: 2 }}, symbol: 'none' }},
                         {{ name: 'MA60', type: 'line', data: chartData.ma60, smooth: true, lineStyle: {{ color: '#2980b9', width: 2 }}, symbol: 'none' }},
-                        {{ name: 'Volume', type: 'bar', data: chartData.volumes, xAxisIndex: 1, yAxisIndex: 1, itemStyle: {{ color: '#7f8c8d' }} }}
-                    ]
-                }};
-                chart.setOption(option);
-                window.addEventListener('resize', function() {{ chart.resize(); }});
-            }}
-            renderChart('hynixChart', hynixData, 'SK하이닉스 추세 (모바일 최적화)');
-            renderChart('shiChart', shiData, '삼성중공업 추세 (모바일 최적화)');
-        </script>
-    </body>
-    </html>
-    """
-    
-    with open('dashboard.html', 'w', encoding='utf-8') as f:
-        f.write(html_content)
-
-if __name__ == "__main__":
-    create_dashboard()
+                        {{ name: 'Volume', type: '
