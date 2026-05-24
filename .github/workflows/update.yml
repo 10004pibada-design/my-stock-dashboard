@@ -26,7 +26,7 @@ jobs:
       - name: 대시보드 생성 스크립트 실행
         run: python dashboard.py
 
-      - name: 변경된 HTML 저장 및 자동 푸시
+      - name: 변경된 파일 저장 및 자동 푸시
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -34,5 +34,6 @@ jobs:
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
           git add dashboard.html
+          git add tickers.json || true
           git commit -m "Automated dashboard update" || echo "No changes to commit"
           git push
