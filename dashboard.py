@@ -478,8 +478,10 @@ def create_dashboard():
             window.addEventListener('resize', function() {{ chart.resize(); }});
         }}
 
+        window.onload = function() {{
 {js_render}
-        renderAddedList();
+            renderAddedList();
+        }};
     </script>
 </body>
 </html>"""
