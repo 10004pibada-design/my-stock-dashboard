@@ -36,6 +36,15 @@ def create_dashboard():
         except Exception as e:
             print(f"Error processing {name}: {e}")
 
+    # 에러 방지용: 데이터 추출을 f-string 밖에서 미리 전부 계산 (여기서 에러가 났었음)
+    hynix_price = data.get('SK하이닉스', {}).get('latest_price', 0)
+    hynix_vol = data.get('SK하이닉스', {}).get('latest_vol', 0)
+    shi_price = data.get('삼성중공업', {}).get('latest_price', 0)
+    shi_vol = data.get('삼성중공업', {}).get('latest_vol', 0)
+    
+    hynix_json = json.dumps(data.get('SK하이닉스', {}))
+    shi_json = json.dumps(data.get('삼성중공업', {}))
+
     # HTML 렌더링
     html_content = f"""
     <!DOCTYPE html>
@@ -63,22 +72,22 @@ def create_dashboard():
         <div class="container">
             <div class="card">
                 <div class="kpi-container">
-                    <div class="kpi"><div class="kpi-title">SK하이닉스 종가 (원)</div><div class="kpi-value">{data.get('SK하이닉스', {{}}).get('latest_price', 0):,.0f}</div></div>
-                    <div class="kpi"><div class="kpi-title">24H 거래량</div><div class="kpi-value">{data.get('SK하이닉스', {{}}).get('latest_vol', 0):,.0f}</div></div>
+                    <div class="kpi"><div class="kpi-title">SK하이닉스 종가 (원)</div><div class="kpi-value">{hynix_price:,.0f}</div></div>
+                    <div class="kpi"><div class="kpi-title">24H 거래량</div><div class="kpi-value">{hynix_vol:,.0f}</div></div>
                 </div>
                 <div id="hynixChart" class="chart"></div>
             </div>
             <div class="card">
                 <div class="kpi-container">
-                    <div class="kpi"><div class="kpi-title">삼성중공업 종가 (원)</div><div class="kpi-value">{data.get('삼성중공업', {{}}).get('latest_price', 0):,.0f}</div></div>
-                    <div class="kpi"><div class="kpi-title">24H 거래량</div><div class="kpi-value">{data.get('삼성중공업', {{}}).get('latest_vol', 0):,.0f}</div></div>
+                    <div class="kpi"><div class="kpi-title">삼성중공업 종가 (원)</div><div class="kpi-value">{shi_price:,.0f}</div></div>
+                    <div class="kpi"><div class="kpi-title">24H 거래량</div><div class="kpi-value">{shi_vol:,.0f}</div></div>
                 </div>
                 <div id="shiChart" class="chart"></div>
             </div>
         </div>
         <script>
-            var hynixData = {json.dumps(data.get('SK하이닉스', {}))};
-            var shiData = {json.dumps(data.get('삼성중공업', {}))};
+            var hynixData = {hynix_json};
+            var shiData = {shi_json};
             
             function renderChart(elementId, chartData, title) {{
                 if (!chartData.dates) return;
