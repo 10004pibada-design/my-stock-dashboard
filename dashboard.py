@@ -329,6 +329,8 @@ def create_dashboard():
             color: #7f8c8d;
             line-height: 1.7;
         }}
+        .notice a {{ color: #3498db; text-decoration: none; }}
+        .notice a:hover {{ text-decoration: underline; }}
         .msg-error {{ color: #e74c3c; font-size: 13px; margin-top: 8px; }}
 
         @media (max-width: 768px) {{
@@ -343,7 +345,6 @@ def create_dashboard():
     <div class="container" id="mainContainer">
 {cards_html}
 
-        <!-- ── 종목 추가 패널 ── -->
         <div class="add-panel">
             <h2>➕ 종목 추가</h2>
             <p>한국 주식 종목 코드(6자리 숫자)와 표시할 이름을 입력하세요.</p>
@@ -357,8 +358,7 @@ def create_dashboard():
             <div class="notice">
                 ℹ️ 추가한 종목 코드는 <b>tickers.json</b> 파일에 저장됩니다.<br>
                 GitHub Actions가 다음에 실행될 때 차트가 자동으로 생성됩니다.<br>
-                종목 코드는 <a href="https://finance.yahoo.com" target="_blank">Yahoo Finance</a>에서
-                확인하세요. 한국 주식은 코드 뒤에 <b>.KS</b>(유가증권) 또는 <b>.KQ</b>(코스닥)가 붙습니다.
+                종목 코드는 <a href="https://finance.yahoo.com" target="_blank">Yahoo Finance</a>에서 확인하세요. 한국 주식은 코드 뒤에 <b>.KS</b>(유가증권) 또는 <b>.KQ</b>(코스닥)가 붙습니다.
             </div>
         </div>
     </div>
@@ -419,7 +419,6 @@ def create_dashboard():
         }}
 
         function saveAndNotify() {{
-            // tickers.json 파일을 다운로드 (GitHub에 직접 업로드 필요)
             var blob = new Blob(
                 [JSON.stringify(extraTickers, null, 2)],
                 {{type: 'application/json'}}
@@ -442,12 +441,12 @@ def create_dashboard():
                 tooltip: {{ trigger: 'axis', axisPointer: {{ type: 'cross' }} }},
                 legend: {{ data: ['Candlestick', 'MA20', 'MA60'], top: 30 }},
                 grid: [
-                    {{ left: '5%', right: '5%', height: '50%' }},
-                    {{ left: '5%', right: '5%', top: '70%', height: '15%' }}
+                    {{ left: '5%', right: '5%', top: '12%', height: '50%' }},
+                    {{ left: '5%', right: '5%', top: '72%', height: '15%' }}
                 ],
                 xAxis: [
-                    {{ type: 'category', data: chartData.dates, gridIndex: 0, scale: true, boundaryGap: false }},
-                    {{ type: 'category', data: chartData.dates, gridIndex: 1, scale: true, boundaryGap: false, show: false }}
+                    {{ type: 'category', data: chartData.dates, gridIndex: 0, boundaryGap: false }},
+                    {{ type: 'category', data: chartData.dates, gridIndex: 1, boundaryGap: false, show: false }}
                 ],
                 yAxis: [
                     {{ scale: true, gridIndex: 0 }},
@@ -456,7 +455,7 @@ def create_dashboard():
                 ],
                 dataZoom: [
                     {{ type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 }},
-                    {{ show: true, type: 'slider', xAxisIndex: [0, 1], start: 0, end: 100 }}
+                    {{ show: true, type: 'slider', xAxisIndex: [0, 1], top: '92%', start: 0, end: 100 }}
                 ],
                 series: [
                     {{ name: 'Candlestick', type: 'candlestick', data: chartData.kline,
@@ -475,6 +474,12 @@ def create_dashboard():
                 ]
             }};
             chart.setOption(option);
+            
+            // Flexbox 초기 렌더링 지연 문제를 방지하기 위해 50ms 후 강제 리사이즈 실행
+            setTimeout(function() {{
+                chart.resize();
+            }}, 50);
+
             window.addEventListener('resize', function() {{ chart.resize(); }});
         }}
 
