@@ -1,0 +1,36 @@
+name: Update Stock Dashboard
+
+on:
+  schedule:
+    # 매주 월~금, 한국 시간(KST) 오전 8시 실행 (UTC 기준 전날 23:00)
+    - cron: '0 23 * * 0-4'
+  workflow_dispatch: # 수동으로 즉시 실행할 수 있는 버튼
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 코드 불러오기
+        uses: actions/checkout@v4
+
+      - name: 파이썬 환경 세팅
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 필요 라이브러리 설치
+        run: pip install -r requirements.txt
+
+      - name: 대시보드 업데이트 실행 (데이터 수집)
+        run: python dashboard.py
+
+      - name: 변경된 HTML 저장 및 반영
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add dashboard.html
+          git commit -m "Automated dashboard update" || exit 0
+          git push
