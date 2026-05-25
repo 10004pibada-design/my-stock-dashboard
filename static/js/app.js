@@ -483,12 +483,14 @@ const StockCard = {
 
         const div = document.createElement('div');
         div.id = cardId;
-        div.className = 'stock-card';
+        div.className = `stock-card ${removable ? 'custom-stock-card' : 'main-stock-card'}`;
         div.innerHTML = `
             <div class="stock-header">
                 <div class="stock-title-wrap">
-                    <h4>${data.name || ticker}</h4>
-                    <span class="stock-code">${ticker}</span>
+                    <div class="stock-title-line">
+                        <h4>${data.name || ticker}</h4>
+                        <span class="stock-code">${ticker}</span>
+                    </div>
                 </div>
                 <div class="stock-header-right">
                     <span class="signal-badge ${signalClass}">${data.signal_text || '분석중'}</span>

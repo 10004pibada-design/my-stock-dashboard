@@ -274,6 +274,7 @@ def fetch_stock_data(ticker, period='1y'):
         
         result = {
             'ticker': ticker,
+            'name': resolve_stock_display_name(ticker),
             'dates': df_clean.index.strftime('%Y-%m-%d').tolist(),
             'kline': [[float(o), float(c), float(l), float(h)]
                      for o, c, l, h in zip(opens, closes, lows, highs)],
