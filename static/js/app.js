@@ -1,5 +1,5 @@
 // ========================================
-// Part 1: Core Utilities
+// Stock Dashboard - Main Application
 // ========================================
 
 const AppState = {
@@ -8,14 +8,31 @@ const AppState = {
     autoRefreshEnabled: true,
     currentTheme: localStorage.getItem('theme') || 'light',
     notificationsEnabled: false,
-    wsConnected: false
+    wsConnected: false,
+    debug: true
 };
 
 const CONFIG = {
     REFRESH_INTERVAL: 60000,
     ANIMATION_DURATION: 300,
-    DEBOUNCE_DELAY: 300
+    DEBOUNCE_DELAY: 300,
+    MAX_RETRIES: 3
 };
+
+// Debug logger
+function log(...args) {
+    if (AppState.debug) {
+        console.log('[StockDashboard]', ...args);
+    }
+}
+
+function error(...args) {
+    console.error('[StockDashboard]', ...args);
+}
+
+// ========================================
+// Part 1: Core Utilities
+// ========================================
 
 const Utils = {
     formatNumber(num) {
@@ -27,6 +44,11 @@ const Utils = {
         if (num === null || num === undefined || isNaN(num)) return '-';
         const sign = num > 0 ? '+' : '';
         return `${sign}${num.toFixed(2)}%`;
+    },
+    
+    formatCurrency(num) {
+        if (num === null || num === undefined || isNaN(num)) return '-';
+        return new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'KRW' }).format(Math.round(num));
     },
     
     debounce(fn, delay) {
@@ -49,261 +71,283 @@ const Utils = {
     }
 };
 
-const Notification = {
-    toast(title, message, type = 'info') {
-        const container = document.getElementById('toastContainer');
-        if (!container) return;
+// ========================================
+// Part 2: API Client
+// ========================================
+
+const API = {
+    baseUrl: '',
+    
+    async request(url, options = {}) {
+        const fullUrl = url.startsWith('http') ? url : `${this.baseUrl}${url}`;
+        const defaults = {
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        };
         
-        const toast = document.createElement('div');
-        toast.className = `toast ${type}`;
-        toast.innerHTML = `
-            <div class="toast-header">
-                <i class="fas ${this.getIcon(type)}"></i>
-                <span>${title}</span>
-            </div>
-            <div class="toast-body">${message}</div>
-        `;
-        
-        container.appendChild(toast);
-        
-        setTimeout(() => {
-            toast.classList.add('fade-out');
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
+        try {
+            log('API Request:', fullUrl);
+            const response = await fetch(fullUrl, { ...defaults, ...options });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            log('API Response:', fullUrl, data.success ? 'success' : 'failed');
+            return data;
+        } catch (err) {
+            error('API Error:', fullUrl, err.message);
+            throw err;
+        }
     },
     
-    getIcon(type) {
+    get(url) { return this.request(url); },
+    post(url, data) { return this.request(url, { method: 'POST', body: JSON.stringify(data) }); },
+    put(url, data) { return this.request(url, { method: 'PUT', body: JSON.stringify(data) }); },
+    delete(url) { return this.request(url, { method: 'DELETE' }); },
+    
+    async getStockData(ticker) {
+        if (!ticker) return null;
+        try {
+            const data = await this.get(`/api/stock/${ticker}`);
+            return data.success ? data : null;
+        } catch (err) {
+            error('Failed to get stock data for', ticker, err);
+            return null;
+        }
+    },
+    
+    async searchStocks(query) {
+        if (!query || query.length < 2) return [];
+        try {
+            const data = await this.get(`/api/search?q=${encodeURIComponent(query)}`);
+            return data.success ? data.results || [] : [];
+        } catch (err) {
+            error('Search failed:', err);
+            return [];
+        }
+    }
+};
+
+// ========================================
+// Part 3: Notification System
+// ========================================
+
+const Notification = {
+    container: null,
+    
+    init() {
+        this.container = document.getElementById('toastContainer');
+        if (!this.container) {
+            this.container = document.createElement('div');
+            this.container.id = 'toastContainer';
+            this.container.className = 'toast-container';
+            document.body.appendChild(this.container);
+        }
+    },
+    
+    toast(title, message, type = 'info') {
+        if (!this.container) this.init();
+        
         const icons = {
             success: 'fa-check-circle',
             error: 'fa-exclamation-circle',
             warning: 'fa-exclamation-triangle',
             info: 'fa-info-circle'
         };
-        return icons[type] || icons.info;
-    },
-    
-    async requestPermission() {
-        if (!('Notification' in window)) return false;
-        if (Notification.permission === 'granted') return true;
-        const result = await Notification.requestPermission();
-        return result === 'granted';
+        
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.innerHTML = `
+            <i class="fas ${icons[type] || icons.info}"></i>
+            <div class="toast-content">
+                <strong>${title}</strong>
+                <span>${message}</span>
+            </div>
+        `;
+        
+        this.container.appendChild(toast);
+        
+        setTimeout(() => {
+            toast.classList.add('show');
+        }, 10);
+        
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
     }
 };
 
-const API = {
-    async request(url, options = {}) {
-        const defaultOptions = {
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        };
-        
-        try {
-            const response = await fetch(url, { ...defaultOptions, ...options });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return await response.json();
-        } catch (error) {
-            console.error('API Error:', error);
-            throw error;
-        }
-    },
-    
-    get(url) {
-        return this.request(url);
-    },
-    
-    post(url, data) {
-        return this.request(url, {
-            method: 'POST',
-            body: JSON.stringify(data)
-        });
-    },
-    
-    put(url, data) {
-        return this.request(url, {
-            method: 'PUT',
-            body: JSON.stringify(data)
-        });
-    },
-    
-    delete(url) {
-        return this.request(url, { method: 'DELETE' });
-    },
-    
-    async getStockData(ticker) {
-        const data = await this.get(`/api/stock/${encodeURIComponent(ticker)}`);
-        return data?.data;
-    },
-    
-    async searchStocks(query) {
-        return await this.get(`/api/search?q=${encodeURIComponent(query)}`);
-    },
-    
-    async addTicker(name, ticker) {
-        return await this.post('/api/tickers', { name, ticker });
-    },
-    
-    async getMarketStatus() {
-        return await this.get('/api/market-status');
-    }
-};
+// ========================================
+// Part 4: Chart Renderer
+// ========================================
 
 const ChartRenderer = {
     render(chartId, data, name) {
-        const chartDom = document.getElementById(chartId);
-        if (!chartDom) return;
-        
-        if (AppState.charts[chartId]) {
-            AppState.charts[chartId].dispose();
+        const container = document.getElementById(chartId);
+        if (!container) {
+            error('Chart container not found:', chartId);
+            return;
         }
         
-        const chart = echarts.init(chartDom);
-        AppState.charts[chartId] = chart;
+        if (!data || !data.ohlc || data.ohlc.length === 0) {
+            error('No data for chart:', chartId);
+            container.innerHTML = '<div class="chart-error">데이터 없음</div>';
+            return;
+        }
         
-        const isDark = AppState.currentTheme === 'dark';
-        const textColor = isDark ? '#e5e7eb' : '#1f2937';
-        const gridColor = isDark ? '#374151' : '#e5e7eb';
+        // Dispose existing chart
+        if (AppState.charts[chartId]) {
+            try {
+                AppState.charts[chartId].dispose();
+            } catch (e) {
+                error('Error disposing chart:', e);
+            }
+            delete AppState.charts[chartId];
+        }
         
-        const dates = data.dates || [];
-        const kline = data.kline || [];
-        const ma20 = data.ma20 || [];
-        const ma60 = data.ma60 || [];
-        const volumes = data.volumes || [];
+        // Check if ECharts is available
+        if (typeof echarts === 'undefined') {
+            error('ECharts not loaded');
+            container.innerHTML = '<div class="chart-error">차트 라이브러리 로딩 실패</div>';
+            return;
+        }
         
-        const option = {
-            title: {
-                text: name,
-                left: 'center',
-                textStyle: { color: textColor, fontSize: 14, fontWeight: 'bold' }
-            },
-            tooltip: {
-                trigger: 'axis',
-                axisPointer: { type: 'cross' },
-                backgroundColor: isDark ? '#1f2937' : '#ffffff',
-                borderColor: isDark ? '#374151' : '#e5e7eb',
-                textStyle: { color: textColor }
-            },
-            legend: {
-                data: ['K-Line', 'MA20', 'MA60', 'Volume'],
-                top: 25,
-                textStyle: { color: textColor }
-            },
-            grid: [
-                { left: '10%', right: '8%', height: '50%', top: 60 },
-                { left: '10%', right: '8%', top: '68%', height: '16%' }
-            ],
-            xAxis: [
-                {
-                    type: 'category',
-                    data: dates,
-                    gridIndex: 0,
-                    axisLine: { lineStyle: { color: gridColor } },
-                    axisLabel: { color: textColor }
+        try {
+            const chart = echarts.init(container, AppState.currentTheme === 'dark' ? 'dark' : null);
+            AppState.charts[chartId] = chart;
+            
+            const dates = data.ohlc.map(d => d[0]);
+            const prices = data.ohlc.map(d => d.slice(1));
+            const volumes = data.volume || [];
+            
+            const option = {
+                animation: true,
+                backgroundColor: 'transparent',
+                title: {
+                    text: name,
+                    left: 'center',
+                    textStyle: { fontSize: 14 }
                 },
-                {
-                    type: 'category',
-                    data: dates,
-                    gridIndex: 1,
-                    axisLine: { lineStyle: { color: gridColor } },
-                    axisLabel: { show: false }
-                }
-            ],
-            yAxis: [
-                {
-                    scale: true,
-                    gridIndex: 0,
-                    splitLine: { lineStyle: { color: isDark ? '#374151' : '#f3f4f6' } },
-                    axisLabel: { color: textColor }
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: { type: 'cross' }
                 },
-                {
-                    scale: true,
-                    gridIndex: 1,
-                    splitLine: { show: false },
-                    axisLabel: { show: false }
-                }
-            ],
-            dataZoom: [
-                { type: 'inside', xAxisIndex: [0, 1], start: 50, end: 100 },
-                {
-                    show: true,
-                    xAxisIndex: [0, 1],
-                    type: 'slider',
-                    top: '85%',
-                    start: 50,
-                    end: 100,
-                    textStyle: { color: textColor }
-                }
-            ],
-            series: [
-                {
-                    name: 'K-Line',
-                    type: 'candlestick',
-                    data: kline.map(d => [d[0], d[1], d[2], d[3]]),
-                    itemStyle: {
-                        color: '#ef4444',
-                        color0: '#3b82f6',
-                        borderColor: '#ef4444',
-                        borderColor0: '#3b82f6'
+                legend: { top: 'bottom' },
+                grid: [
+                    { left: '10%', right: '8%', height: '55%' },
+                    { left: '10%', right: '8%', top: '68%', height: '16%' }
+                ],
+                xAxis: [
+                    {
+                        type: 'category',
+                        data: dates,
+                        scale: true,
+                        boundaryGap: false,
+                        axisLine: { onZero: false },
+                        splitLine: { show: false },
+                        axisLabel: { show: false }
+                    },
+                    {
+                        type: 'category',
+                        gridIndex: 1,
+                        data: dates,
+                        axisLabel: { show: true }
                     }
-                },
-                {
-                    name: 'MA20',
-                    type: 'line',
-                    data: ma20,
-                    smooth: true,
-                    lineStyle: { color: '#f59e0b', width: 1 },
-                    symbol: 'none'
-                },
-                {
-                    name: 'MA60',
-                    type: 'line',
-                    data: ma60,
-                    smooth: true,
-                    lineStyle: { color: '#8b5cf6', width: 1 },
-                    symbol: 'none'
-                },
-                {
-                    name: 'Volume',
-                    type: 'bar',
-                    xAxisIndex: 1,
-                    yAxisIndex: 1,
-                    data: volumes,
-                    itemStyle: {
-                        color: (params) => {
-                            const close = kline[params.dataIndex]?.[1] || 0;
-                            const open = kline[params.dataIndex]?.[0] || 0;
-                            return close >= open ? '#ef4444' : '#3b82f6';
+                ],
+                yAxis: [
+                    {
+                        scale: true,
+                        splitArea: { show: true }
+                    },
+                    {
+                        scale: true,
+                        gridIndex: 1,
+                        splitNumber: 2,
+                        axisLabel: { show: false },
+                        axisLine: { show: false },
+                        axisTick: { show: false },
+                        splitLine: { show: false }
+                    }
+                ],
+                dataZoom: [{ type: 'inside', xAxisIndex: [0, 1], start: 50, end: 100 }],
+                series: [
+                    {
+                        name: 'Price',
+                        type: 'candlestick',
+                        data: prices,
+                        itemStyle: {
+                            color: '#ef4444',
+                            color0: '#3b82f6',
+                            borderColor: '#ef4444',
+                            borderColor0: '#3b82f6'
                         }
+                    },
+                    {
+                        name: 'MA20',
+                        type: 'line',
+                        data: data.ma20 || [],
+                        smooth: true,
+                        lineStyle: { opacity: 0.5 },
+                        symbol: 'none'
+                    },
+                    {
+                        name: 'MA60',
+                        type: 'line',
+                        data: data.ma60 || [],
+                        smooth: true,
+                        lineStyle: { opacity: 0.5 },
+                        symbol: 'none'
+                    },
+                    {
+                        name: 'Volume',
+                        type: 'bar',
+                        xAxisIndex: 1,
+                        yAxisIndex: 1,
+                        data: volumes,
+                        itemStyle: { color: '#93c5fd' }
                     }
-                }
-            ]
-        };
-        
-        chart.setOption(option);
-        
-        chart.on('click', (params) => {
-            console.log('Chart clicked:', params);
-        });
-        
-        return chart;
+                ]
+            };
+            
+            chart.setOption(option);
+            
+            window.addEventListener('resize', () => {
+                chart.resize();
+            });
+            
+            log('Chart rendered:', chartId);
+        } catch (err) {
+            error('Chart render error:', err);
+            container.innerHTML = '<div class="chart-error">차트 렌더링 오류</div>';
+        }
     },
     
     updateTheme() {
-        Object.values(AppState.charts).forEach(chart => {
+        Object.keys(AppState.charts).forEach(key => {
+            const chart = AppState.charts[key];
             if (chart) {
                 chart.dispose();
+                delete AppState.charts[key];
             }
         });
-        AppState.charts = {};
-        App.loadStocks();
+        // Re-render will happen on next data load
     }
 };
+
+// ========================================
+// Part 5: Stock Card Component
+// ========================================
 
 const StockCard = {
     create(cardId, chartId, data, ticker, removable = false) {
         const signalClass = data.signal_class || 'neutral';
-        const changeClass = data.change_pct >= 0 ? 'positive' : 'negative';
-        const changeIcon = data.change_pct >= 0 ? 'fa-arrow-up' : 'fa-arrow-down';
+        const changeClass = (data.change_pct || 0) >= 0 ? 'positive' : 'negative';
+        const changeIcon = (data.change_pct || 0) >= 0 ? 'fa-arrow-up' : 'fa-arrow-down';
         
         const div = document.createElement('div');
         div.id = cardId;
@@ -320,339 +364,69 @@ const StockCard = {
                     <i class="fas ${changeIcon}"></i> ${Utils.formatPercent(data.change_pct)}
                 </span>
             </div>
-            <div class="stock-chart" id="${chartId}" style="width: 100%; height: 360px;"></div>
-            <div class="stock-info">
-                <span>거래량: ${Utils.formatNumber(data.latest_vol)}</span>
-                <span>RSI: ${data.rsi_value ? data.rsi_value.toFixed(2) : '-'}</span>
+            <div class="stock-chart">
+                <div id="${chartId}" style="width:100%; height:300px;"></div>
             </div>
-            <div class="signal-reason">${data.signal_reason || ''}</div>
+            <div class="stock-metrics">
+                <div class="metric">
+                    <span class="label">RSI(14)</span>
+                    <span class="value ${this._getRsiClass(data.rsi)}">${data.rsi ? data.rsi.toFixed(2) : '-'}</span>
+                </div>
+                <div class="metric">
+                    <span class="label">MACD</span>
+                    <span class="value">${data.macd ? data.macd.toFixed(2) : '-'}</span>
+                </div>
+                <div class="metric">
+                    <span class="label">거래량</span>
+                    <span class="value">${data.volume ? Utils.formatNumber(data.volume[data.volume.length - 1]) : '-'}</span>
+                </div>
+            </div>
         `;
         return div;
+    },
+    
+    _getRsiClass(rsi) {
+        if (!rsi) return '';
+        if (rsi > 70) return 'overbought';
+        if (rsi < 30) return 'oversold';
+        return '';
     }
 };
 
 // ========================================
-// Part 2: Search & Settings Managers
-// ========================================
-
-const SearchManager = {
-    init() {
-        const searchInput = document.getElementById('stockSearch');
-        const searchBtn = document.getElementById('searchBtn');
-        
-        if (searchInput) {
-            searchInput.addEventListener('input', Utils.debounce(() => {
-                this.performSearch(searchInput.value.trim());
-            }, 500));
-            
-            searchBtn?.addEventListener('click', () => {
-                this.performSearch(searchInput.value.trim());
-            });
-            
-            searchInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    this.performSearch(searchInput.value.trim());
-                }
-            });
-        }
-        
-        document.querySelectorAll('.chip').forEach(chip => {
-            chip.addEventListener('click', () => {
-                const code = chip.dataset.code;
-                const name = chip.textContent;
-                this.addStock(name, code);
-            });
-        });
-    },
-    
-    async performSearch(query) {
-        if (!query || query.length < 2) {
-            this.hideResults();
-            return;
-        }
-        
-        try {
-            const result = await API.searchStocks(query);
-            this.displayResults(result.results || []);
-        } catch (error) {
-            this.displayError('검색 중 오류가 발생했습니다.');
-        }
-    },
-    
-    displayResults(results) {
-        const container = document.getElementById('searchResults');
-        if (!container) return;
-        
-        if (results.length === 0) {
-            container.innerHTML = '<div class="search-result-item"><div class="search-result-info"><span style="color: var(--text-muted);">검색 결과가 없습니다.</span></div></div>';
-            container.style.display = 'block';
-            return;
-        }
-        
-        container.innerHTML = results.map(r => `
-            <div class="search-result-item">
-                <div class="search-result-info">
-                    <h4>${r.name}</h4>
-                    <span>${r.ticker}<span class="market-badge">${r.market}</span></span>
-                </div>
-                <button class="btn-add" onclick="SearchManager.addStock('${r.name}', '${r.ticker}')">
-                    <i class="fas fa-plus"></i> 추가
-                </button>
-            </div>
-        `).join('');
-        
-        container.style.display = 'block';
-    },
-    
-    displayError(message) {
-        const container = document.getElementById('searchResults');
-        if (!container) return;
-        container.innerHTML = `<div class="search-result-item"><div class="search-result-info"><span style="color: var(--accent-red);">${message}</span></div></div>`;
-        container.style.display = 'block';
-    },
-    
-    hideResults() {
-        const container = document.getElementById('searchResults');
-        if (container) container.style.display = 'none';
-    },
-    
-    async addStock(name, ticker) {
-        try {
-            const result = await API.addTicker(name, ticker);
-            
-            if (result.success) {
-                Notification.toast('추가 완료', `${name}가 관심 종목에 추가되었습니다.`, 'success');
-                
-                if (result.data) {
-                    result.data.name = name;
-                    this.addStockCard(ticker, result.data);
-                }
-                
-                const searchInput = document.getElementById('stockSearch');
-                if (searchInput) searchInput.value = '';
-                this.hideResults();
-                
-                setTimeout(() => App.loadStocks(), 1000);
-            } else {
-                Notification.toast('추가 실패', result.error || '종목을 추가할 수 없습니다.', 'error');
-            }
-        } catch (error) {
-            Notification.toast('오류', '종목 추가 중 오류가 발생했습니다.', 'error');
-        }
-    },
-    
-    addStockCard(ticker, data, targetGrid = 'mainStocksGrid') {
-        const grid = document.getElementById(targetGrid);
-        if (!grid) {
-            console.error(`Grid ${targetGrid} not found`);
-            return;
-        }
-
-        const emptyState = grid.querySelector('.empty-state-custom');
-        if (emptyState) emptyState.remove();
-
-        const cardId = `card-${ticker.replace(/\./g, '_')}`;
-        const chartId = `chart-${ticker.replace(/\./g, '_')}`;
-        
-        const existingCard = document.getElementById(cardId);
-        if (existingCard) {
-            existingCard.remove();
-        }
-
-        const card = StockCard.create(cardId, chartId, data, ticker);
-        grid.appendChild(card);
-
-        this.$nextTick(() => {
-            const chartContainer = document.getElementById(chartId);
-            if (chartContainer) {
-                chartContainer.style.width = '100%';
-                chartContainer.style.height = '360px';
-                ChartRenderer.render(chartId, data, data.name);
-            }
-        });
-    },
-    
-    $nextTick(callback) {
-        setTimeout(callback, 0);
-    }
-};
-
-const SettingsManager = {
-    init() {
-        const themeToggle = document.getElementById('themeToggle');
-        themeToggle?.addEventListener('click', () => this.toggleTheme());
-        
-        const refreshBtn = document.getElementById('refreshBtn');
-        refreshBtn?.addEventListener('click', () => {
-            App.loadStocks();
-            Notification.toast('새로고침', '데이터를 업데이트했습니다.', 'info');
-        });
-        
-        this.applyTheme(AppState.currentTheme);
-    },
-    
-    toggleTheme() {
-        const newTheme = AppState.currentTheme === 'light' ? 'dark' : 'light';
-        this.applyTheme(newTheme);
-        AppState.currentTheme = newTheme;
-        localStorage.setItem('theme', newTheme);
-        
-        const icon = document.querySelector('#themeToggle i');
-        if (icon) {
-            icon.className = newTheme === 'light' ? 'fas fa-moon' : 'fas fa-sun';
-        }
-        
-        ChartRenderer.updateTheme();
-    },
-    
-    applyTheme(theme) {
-        document.documentElement.setAttribute('data-theme', theme);
-    },
-    
-    updateMarketStatus(data) {
-        const statusEl = document.getElementById('marketStatus');
-        if (!statusEl || !data) return;
-        
-        const isOpen = data.is_market_open;
-        statusEl.innerHTML = `
-            <span class="status-dot ${isOpen ? 'open' : 'closed'}"></span>
-            <span class="status-text">${isOpen ? '시장 열림' : '시장 닫힘'}</span>
-        `;
-    },
-    
-    updateRefreshIndicator() {
-        const indicator = document.getElementById('refreshIndicator');
-        if (indicator) {
-            indicator.style.display = AppState.autoRefreshEnabled ? 'inline-flex' : 'none';
-        }
-    }
-};
-
-const App = {
-    async init() {
-        await this.loadStocks();
-        await this.updateMarketStatus();
-        this.startAutoRefresh();
-    },
-    
-    async loadStocks() {
-        try {
-            const grid = document.getElementById('mainStocksGrid');
-            if (grid) {
-                grid.innerHTML = `
-                    <div class="loading-skeleton">
-                        <div class="skeleton-card"></div>
-                        <div class="skeleton-card"></div>
-                    </div>
-                `;
-            }
-            
-            const result = await API.get('/api/stocks');
-            
-            if (result.success && result.data) {
-                this.renderStocks(result.data);
-                this.updateLastUpdateTime();
-            }
-        } catch (error) {
-            console.error('Failed to load stocks:', error);
-            Notification.toast('오류', '데이터 로딩에 실패했습니다.', 'error');
-        }
-    },
-    
-    renderStocks(stocksData) {
-        const grid = document.getElementById('mainStocksGrid');
-        if (!grid) return;
-        
-        grid.innerHTML = '';
-        
-        Object.entries(stocksData).forEach(([ticker, data]) => {
-            const cardId = `card-${ticker.replace(/\./g, '_')}`;
-            const chartId = `chart-${ticker.replace(/\./g, '_')}`;
-            
-            const card = StockCard.create(cardId, chartId, data, ticker);
-            grid.appendChild(card);
-            
-            setTimeout(() => {
-                const chartContainer = document.getElementById(chartId);
-                if (chartContainer) {
-                    chartContainer.style.width = '100%';
-                    chartContainer.style.height = '360px';
-                    ChartRenderer.render(chartId, data, data.name);
-                }
-            }, 100);
-        });
-    },
-    
-    updateLastUpdateTime() {
-        const lastUpdate = document.getElementById('lastUpdate');
-        if (lastUpdate) {
-            lastUpdate.textContent = new Date().toLocaleTimeString('ko-KR');
-        }
-    },
-    
-    saveSettings() {
-        localStorage.setItem('autoRefresh', AppState.autoRefreshEnabled);
-        localStorage.setItem('theme', AppState.currentTheme);
-    },
-    
-    loadSettings() {
-        AppState.autoRefreshEnabled = localStorage.getItem('autoRefresh') !== 'false';
-        AppState.currentTheme = localStorage.getItem('theme') || 'light';
-        SettingsManager.applyTheme(AppState.currentTheme);
-    },
-    
-    async updateMarketStatus() {
-        try {
-            const result = await API.getMarketStatus();
-            if (result.success) {
-                SettingsManager.updateMarketStatus(result);
-            }
-        } catch (error) {
-            console.error('Market status error:', error);
-        }
-    },
-    
-    startAutoRefresh() {
-        if (AppState.autoRefreshInterval) {
-            clearInterval(AppState.autoRefreshInterval);
-        }
-        
-        AppState.autoRefreshInterval = setInterval(() => {
-            if (AppState.autoRefreshEnabled) {
-                this.loadStocks();
-            }
-        }, CONFIG.REFRESH_INTERVAL);
-        
-        SettingsManager.updateRefreshIndicator();
-    },
-    
-    stopAutoRefresh() {
-        if (AppState.autoRefreshInterval) {
-            clearInterval(AppState.autoRefreshInterval);
-            AppState.autoRefreshInterval = null;
-        }
-        SettingsManager.updateRefreshIndicator();
-    }
-};
-
-// ========================================
-// Part 3: Tab, Portfolio, Backtest Managers
+// Part 6: Tab Manager
 // ========================================
 
 const TabManager = {
+    initialized: false,
+    
     init() {
-        document.querySelectorAll('.tab-btn').forEach(btn => {
+        if (this.initialized) return;
+        
+        const tabBtns = document.querySelectorAll('.tab-btn');
+        log('TabManager: Found', tabBtns.length, 'tab buttons');
+        
+        tabBtns.forEach(btn => {
             btn.addEventListener('click', (e) => this.switchTab(e));
         });
+        
+        this.initialized = true;
     },
     
     switchTab(e) {
         const tabId = e.currentTarget.dataset.tab;
-        if (!tabId) return;
+        if (!tabId) {
+            error('No tab ID found');
+            return;
+        }
         
+        log('Switching to tab:', tabId);
+        
+        // Update button states
         document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
         e.currentTarget.classList.add('active');
         
+        // Update content visibility
         document.querySelectorAll('.tab-content').forEach(content => {
             content.classList.remove('active');
         });
@@ -660,145 +434,120 @@ const TabManager = {
         const targetContent = document.getElementById(`${tabId}Tab`);
         if (targetContent) {
             targetContent.classList.add('active');
+            log('Activated tab content:', `${tabId}Tab`);
+        } else {
+            error('Tab content not found:', `${tabId}Tab`);
         }
         
-        if (tabId === 'portfolio') {
+        // Load portfolio data when switching to portfolio tab
+        if (tabId === 'portfolio' && typeof PortfolioManager !== 'undefined') {
             PortfolioManager.loadPortfolio();
         }
     }
 };
 
+// ========================================
+// Part 7: Portfolio Manager
+// ========================================
+
 const PortfolioManager = {
+    initialized: false,
+    
     init() {
+        if (this.initialized) return;
+        
         const addBtn = document.getElementById('addPortfolioBtn');
         if (addBtn) {
             addBtn.addEventListener('click', () => this.addHolding());
         }
         
-        ['portfolioTicker', 'portfolioName', 'portfolioShares', 'portfolioPrice'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) {
-                el.addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter') this.addHolding();
-                });
-            }
-        });
+        this.initialized = true;
+        log('PortfolioManager initialized');
     },
     
     async addHolding() {
-        const tickerInput = document.getElementById('portfolioTicker');
-        const nameInput = document.getElementById('portfolioName');
-        const sharesInput = document.getElementById('portfolioShares');
-        const priceInput = document.getElementById('portfolioPrice');
+        const ticker = document.getElementById('portfolioTicker')?.value?.trim();
+        const name = document.getElementById('portfolioName')?.value?.trim();
+        const shares = parseFloat(document.getElementById('portfolioShares')?.value);
+        const avgPrice = parseFloat(document.getElementById('portfolioPrice')?.value);
         
-        if (!tickerInput || !nameInput || !sharesInput || !priceInput) return;
-        
-        const ticker = tickerInput.value.trim();
-        const name = nameInput.value.trim();
-        const shares = parseFloat(sharesInput.value);
-        const avgPrice = parseFloat(priceInput.value);
-        
-        if (!ticker || !name || isNaN(shares) || shares <= 0 || isNaN(avgPrice) || avgPrice <= 0) {
-            Notification.toast('입력 오류', '모든 필드를 올바르게 입력해주세요.', 'error');
+        if (!ticker || !name || !shares || !avgPrice) {
+            Notification.toast('오류', '모든 필드를 입력해주세요.', 'error');
             return;
-        }
-        
-        let formattedTicker = ticker;
-        if (/^\d{6}$/.test(ticker)) {
-            formattedTicker = `${ticker}.KS`;
         }
         
         try {
             const result = await API.post('/api/portfolio', {
-                ticker: formattedTicker,
-                name: name,
-                shares: shares,
-                avg_price: avgPrice
+                ticker, name, shares, avg_price: avgPrice
             });
             
             if (result.success) {
-                Notification.toast('추가 완료', `${name}가 포트폴리오에 추가되었습니다.`, 'success');
-                
-                tickerInput.value = '';
-                nameInput.value = '';
-                sharesInput.value = '';
-                priceInput.value = '';
-                
+                Notification.toast('성공', '종목이 추가되었습니다.', 'success');
                 this.loadPortfolio();
+                // Clear inputs
+                ['portfolioTicker', 'portfolioName', 'portfolioShares', 'portfolioPrice'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.value = '';
+                });
             } else {
-                Notification.toast('오류', result.error || '추가에 실패했습니다.', 'error');
+                Notification.toast('오류', result.error || '추가 실패', 'error');
             }
-        } catch (error) {
-            Notification.toast('오류', '서버 연결에 실패했습니다.', 'error');
+        } catch (err) {
+            error('Failed to add holding:', err);
+            Notification.toast('오류', '서버 연결 실패', 'error');
         }
     },
     
     async loadPortfolio() {
         try {
             const result = await API.get('/api/portfolio');
-            if (result.success && result.data) {
+            if (result.success) {
                 this.renderPortfolio(result.data);
             }
-        } catch (error) {
-            console.error('Portfolio load error:', error);
+        } catch (err) {
+            error('Failed to load portfolio:', err);
         }
     },
     
     renderPortfolio(data) {
         const tbody = document.getElementById('portfolioTableBody');
-        const summary = data.summary || {};
-        const holdings = data.holdings || [];
-        
-        const totalInvestedEl = document.getElementById('totalInvested');
-        const currentValueEl = document.getElementById('currentValue');
-        const totalReturnEl = document.getElementById('totalReturn');
-        
-        if (totalInvestedEl) {
-            totalInvestedEl.textContent = Utils.formatNumber(summary.total_invested || 0) + '원';
-        }
-        if (currentValueEl) {
-            currentValueEl.textContent = Utils.formatNumber(summary.current_value || 0) + '원';
-        }
-        if (totalReturnEl) {
-            const returnPct = summary.return_pct || 0;
-            const returnValue = summary.total_return || 0;
-            const isPositive = returnValue >= 0;
-            totalReturnEl.innerHTML = `
-                <span class="${isPositive ? 'positive' : 'negative'}">
-                    ${isPositive ? '+' : ''}${Utils.formatNumber(returnValue)}원 
-                    (${isPositive ? '+' : ''}${returnPct.toFixed(2)}%)
-                </span>
-            `;
-        }
-        
         if (!tbody) return;
         
+        const summary = data?.summary || {};
+        const holdings = data?.holdings || [];
+        
+        // Update summary
+        const totalInvested = document.getElementById('totalInvested');
+        const currentValue = document.getElementById('currentValue');
+        const totalReturn = document.getElementById('totalReturn');
+        
+        if (totalInvested) totalInvested.textContent = Utils.formatCurrency(summary.total_invested || 0);
+        if (currentValue) currentValue.textContent = Utils.formatCurrency(summary.current_value || 0);
+        if (totalReturn) {
+            const returnPct = summary.total_return_pct || 0;
+            totalReturn.textContent = Utils.formatPercent(returnPct);
+            totalReturn.className = `value ${returnPct >= 0 ? 'positive' : 'negative'}`;
+        }
+        
+        // Render holdings
         if (holdings.length === 0) {
-            tbody.innerHTML = `
-                <tr class="empty-row">
-                    <td colspan="8">보유 종목이 없습니다. 종목을 추가하세요.</td>
-                </tr>
-            `;
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="8">보유 종목이 없습니다.</td></tr>';
             return;
         }
         
         tbody.innerHTML = holdings.map(h => {
-            const profitClass = h.profit_loss >= 0 ? 'positive' : 'negative';
-            const profitIcon = h.profit_loss >= 0 ? 'fa-arrow-up' : 'fa-arrow-down';
-            
+            const returnClass = (h.return_pct || 0) >= 0 ? 'positive' : 'negative';
             return `
-                <tr data-id="${h.id}">
-                    <td><strong>${h.name}</strong><br><small>${h.ticker}</small></td>
-                    <td contenteditable="true" onblur="PortfolioManager.updateHolding('${h.id}', 'shares', this.textContent)">${h.shares}</td>
-                    <td contenteditable="true" onblur="PortfolioManager.updateHolding('${h.id}', 'avg_price', this.textContent)">${Utils.formatNumber(h.avg_price)}</td>
-                    <td>${Utils.formatNumber(h.current_price || h.avg_price)}</td>
-                    <td>${Utils.formatNumber(h.current_value || 0)}</td>
-                    <td class="${profitClass}">
-                        <i class="fas ${profitIcon}"></i> ${Utils.formatNumber(h.profit_loss || 0)}
-                    </td>
-                    <td class="${profitClass}">${h.return_pct >= 0 ? '+' : ''}${(h.return_pct || 0).toFixed(2)}%</td>
+                <tr>
+                    <td>${h.name}</td>
+                    <td>${h.shares}</td>
+                    <td>${Utils.formatNumber(h.avg_price)}</td>
+                    <td>${Utils.formatNumber(h.current_price)}</td>
+                    <td>${Utils.formatNumber(h.current_value)}</td>
+                    <td class="${returnClass}">${Utils.formatNumber(h.return_amount)}</td>
+                    <td class="${returnClass}">${Utils.formatPercent(h.return_pct)}</td>
                     <td>
-                        <button class="btn-icon-small" onclick="PortfolioManager.deleteHolding('${h.id}')" title="삭제">
+                        <button class="btn-icon" onclick="PortfolioManager.deleteHolding('${h.id}')">
                             <i class="fas fa-trash"></i>
                         </button>
                     </td>
@@ -807,214 +556,243 @@ const PortfolioManager = {
         }).join('');
     },
     
-    async updateHolding(id, field, value) {
-        const numValue = parseFloat(value.replace(/,/g, ''));
-        if (isNaN(numValue)) {
-            Notification.toast('오류', '올바른 숫자를 입력해주세요.', 'error');
-            this.loadPortfolio();
-            return;
-        }
-        
-        try {
-            const result = await API.put(`/api/portfolio/${id}`, { field, value: numValue });
-            if (result.success) {
-                Notification.toast('수정 완료', '보유 정보가 업데이트되었습니다.', 'success');
-                this.loadPortfolio();
-            }
-        } catch (error) {
-            Notification.toast('오류', '수정에 실패했습니다.', 'error');
-        }
-    },
-    
     async deleteHolding(id) {
         if (!confirm('정말 삭제하시겠습니까?')) return;
         
         try {
             const result = await API.delete(`/api/portfolio/${id}`);
             if (result.success) {
-                Notification.toast('삭제 완료', '종목이 삭제되었습니다.', 'success');
+                Notification.toast('성공', '삭제되었습니다.', 'success');
                 this.loadPortfolio();
             }
-        } catch (error) {
-            Notification.toast('오류', '삭제에 실패했습니다.', 'error');
+        } catch (err) {
+            error('Failed to delete holding:', err);
+            Notification.toast('오류', '삭제 실패', 'error');
         }
     }
 };
 
+// ========================================
+// Part 8: Backtest Manager
+// ========================================
+
 const BacktestManager = {
-    chart: null,
+    initialized: false,
     
     init() {
-        const runBtn = document.getElementById('runBacktestBtn');
-        if (runBtn) {
-            runBtn.addEventListener('click', () => this.runBacktest());
+        if (this.initialized) return;
+        
+        const btn = document.getElementById('runBacktestBtn');
+        if (btn) {
+            btn.addEventListener('click', () => this.runBacktest());
         }
         
-        const tickerInput = document.getElementById('backtestTicker');
-        if (tickerInput) {
-            tickerInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') this.runBacktest();
-            });
-        }
+        this.initialized = true;
+        log('BacktestManager initialized');
     },
     
     async runBacktest() {
-        const tickerInput = document.getElementById('backtestTicker');
-        const periodSelect = document.getElementById('backtestPeriod');
+        const ticker = document.getElementById('backtestTicker')?.value?.trim() || '005930.KS';
+        const period = document.getElementById('backtestPeriod')?.value || '1y';
         
-        if (!tickerInput || !periodSelect) return;
-        
-        let ticker = tickerInput.value.trim();
-        const period = periodSelect.value;
-        
-        if (!ticker) {
-            Notification.toast('입력 오류', '종목코드를 입력해주세요.', 'error');
-            return;
-        }
-        
-        if (/^\d{6}$/.test(ticker)) {
-            ticker = `${ticker}.KS`;
-        }
-        
-        const runBtn = document.getElementById('runBacktestBtn');
-        if (runBtn) {
-            runBtn.disabled = true;
-            runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 분석 중...';
+        const btn = document.getElementById('runBacktestBtn');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 실행중...';
         }
         
         try {
-            const result = await API.get(`/api/backtest/${encodeURIComponent(ticker)}?period=${period}`);
+            const result = await API.get(`/api/backtest/${ticker}?period=${period}`);
             
             if (result.success) {
-                this.renderResults(result.data);
-                Notification.toast('완료', '백테스트가 완료되었습니다.', 'success');
+                this.renderResults(result);
+                Notification.toast('성공', '백테스팅 완료', 'success');
             } else {
-                Notification.toast('오류', result.error || '백테스트에 실패했습니다.', 'error');
+                Notification.toast('오류', result.error || '백테스팅 실패', 'error');
             }
-        } catch (error) {
-            Notification.toast('오류', '서버 연결에 실패했습니다.', 'error');
+        } catch (err) {
+            error('Backtest error:', err);
+            Notification.toast('오류', '백테스팅 오류', 'error');
         } finally {
-            if (runBtn) {
-                runBtn.disabled = false;
-                runBtn.innerHTML = '<i class="fas fa-play"></i> 백테스트 실행';
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-play"></i> 백테스트 실행';
             }
         }
     },
     
     renderResults(data) {
-        const resultsDiv = document.getElementById('backtestResults');
-        const summaryDiv = document.getElementById('backtestSummary');
-        const tradesTbody = document.getElementById('tradesTableBody');
+        const resultsContainer = document.getElementById('backtestResults');
+        if (resultsContainer) {
+            resultsContainer.style.display = 'block';
+        }
         
-        if (resultsDiv) resultsDiv.style.display = 'block';
-        
-        if (summaryDiv) {
-            summaryDiv.innerHTML = `
+        // Render summary
+        const summary = document.getElementById('backtestSummary');
+        if (summary && data.summary) {
+            const s = data.summary;
+            summary.innerHTML = `
                 <div class="summary-grid">
                     <div class="summary-item">
-                        <span class="label">총 거래 횟수</span>
-                        <span class="value">${data.total_trades || 0}회</span>
+                        <span class="label">총 수익률</span>
+                        <span class="value ${s.total_return >= 0 ? 'positive' : 'negative'}">${Utils.formatPercent(s.total_return)}</span>
                     </div>
                     <div class="summary-item">
                         <span class="label">승률</span>
-                        <span class="value ${data.win_rate >= 50 ? 'positive' : 'negative'}">${(data.win_rate || 0).toFixed(1)}%</span>
+                        <span class="value">${(s.win_rate || 0).toFixed(1)}%</span>
                     </div>
                     <div class="summary-item">
-                        <span class="label">총 수익률</span>
-                        <span class="value ${data.total_profit_pct >= 0 ? 'positive' : 'negative'}">${data.total_profit_pct >= 0 ? '+' : ''}${(data.total_profit_pct || 0).toFixed(2)}%</span>
-                    </div>
-                    <div class="summary-item">
-                        <span class="label">최대 낙폭</span>
-                        <span class="value">${(data.max_drawdown || 0).toFixed(2)}%</span>
+                        <span class="label">거래 횟수</span>
+                        <span class="value">${s.total_trades || 0}회</span>
                     </div>
                 </div>
             `;
         }
         
-        if (tradesTbody) {
-            const trades = data.trades || [];
-            if (trades.length === 0) {
-                tradesTbody.innerHTML = '<tr><td colspan="6" class="empty-row">거래 내역이 없습니다.</td></tr>';
-            } else {
-                tradesTbody.innerHTML = trades.map(t => {
-                    const profitClass = t.profit >= 0 ? 'positive' : 'negative';
-                    return `
-                        <tr>
-                            <td>${t.entry_date}</td>
-                            <td>${Utils.formatNumber(t.entry_price)}</td>
-                            <td>${t.exit_date || '-'}</td>
-                            <td>${t.exit_price ? Utils.formatNumber(t.exit_price) : '-'}</td>
-                            <td class="${profitClass}">${t.profit >= 0 ? '+' : ''}${Utils.formatNumber(t.profit)}</td>
-                            <td class="${profitClass}">${t.profit_pct >= 0 ? '+' : ''}${t.profit_pct.toFixed(2)}%</td>
-                        </tr>
-                    `;
-                }).join('');
-            }
+        // Render trades table
+        const tbody = document.getElementById('tradesTableBody');
+        if (tbody && data.trades) {
+            tbody.innerHTML = data.trades.map(t => {
+                const returnClass = (t.return_pct || 0) >= 0 ? 'positive' : 'negative';
+                return `
+                    <tr>
+                        <td>${t.entry_date}</td>
+                        <td>${Utils.formatNumber(t.entry_price)}</td>
+                        <td>${t.exit_date}</td>
+                        <td>${Utils.formatNumber(t.exit_price)}</td>
+                        <td class="${returnClass}">${Utils.formatNumber(t.return_amount)}</td>
+                        <td class="${returnClass}">${Utils.formatPercent(t.return_pct)}</td>
+                    </tr>
+                `;
+            }).join('');
         }
         
-        this.renderChart(data);
+        // Render equity chart
+        this.renderEquityChart(data.equity_curve);
     },
     
-    renderChart(data) {
-        const chartDiv = document.getElementById('backtestChart');
-        if (!chartDiv) return;
+    renderEquityChart(equityData) {
+        if (!equityData || !document.getElementById('backtestChart')) return;
         
-        if (this.chart) {
-            this.chart.dispose();
+        if (typeof echarts === 'undefined') {
+            error('ECharts not available for equity chart');
+            return;
         }
         
-        this.chart = echarts.init(chartDiv);
-        
-        const equityCurve = data.equity_curve || [];
-        const dates = equityCurve.map(e => e.date);
-        const equities = equityCurve.map(e => e.equity);
-        
-        const isDark = AppState.currentTheme === 'dark';
-        
+        const chart = echarts.init(document.getElementById('backtestChart'));
         const option = {
-            title: {
-                text: '자산 곡선',
-                left: 'center',
-                textStyle: { color: isDark ? '#fff' : '#333' }
-            },
-            tooltip: {
-                trigger: 'axis',
-                formatter: '{b}<br/>자산: {c}원'
-            },
-            xAxis: {
-                type: 'category',
-                data: dates,
-                axisLabel: { color: isDark ? '#aaa' : '#666' }
-            },
-            yAxis: {
-                type: 'value',
-                axisLabel: { 
-                    color: isDark ? '#aaa' : '#666',
-                    formatter: value => (value / 1000000).toFixed(0) + 'M'
-                }
-            },
+            title: { text: '자본금 변화', left: 'center' },
+            tooltip: { trigger: 'axis' },
+            xAxis: { type: 'category', data: equityData.map(d => d.date) },
+            yAxis: { type: 'value' },
             series: [{
-                name: '자산',
+                data: equityData.map(d => d.value),
                 type: 'line',
-                data: equities,
                 smooth: true,
-                lineStyle: { width: 3, color: '#2563eb' },
-                areaStyle: {
-                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                        { offset: 0, color: 'rgba(37, 99, 235, 0.3)' },
-                        { offset: 1, color: 'rgba(37, 99, 235, 0.05)' }
-                    ])
-                }
-            }],
-            grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true }
+                areaStyle: { opacity: 0.3 }
+            }]
         };
-        
-        this.chart.setOption(option);
+        chart.setOption(option);
     }
 };
 
-const CustomChartsManager = {
+// ========================================
+// Part 9: Search Manager
+// ========================================
+
+const SearchManager = {
+    initialized: false,
+    
     init() {
+        if (this.initialized) return;
+        
+        const searchBtn = document.getElementById('searchBtn');
+        const searchInput = document.getElementById('stockSearch');
+        
+        if (searchBtn) {
+            searchBtn.addEventListener('click', () => this.performSearch());
+        }
+        
+        if (searchInput) {
+            searchInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') this.performSearch();
+            });
+        }
+        
+        // Quick add chips
+        document.querySelectorAll('.quick-add .chip, .quick-add-chips .chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                const code = chip.dataset.code;
+                if (code && typeof CustomChartsManager !== 'undefined') {
+                    CustomChartsManager.addStock(code);
+                }
+            });
+        });
+        
+        this.initialized = true;
+        log('SearchManager initialized');
+    },
+    
+    async performSearch() {
+        const query = document.getElementById('stockSearch')?.value?.trim();
+        if (!query || query.length < 2) {
+            Notification.toast('알림', '2글자 이상 입력해주세요.', 'warning');
+            return;
+        }
+        
+        const resultsDiv = document.getElementById('searchResults');
+        if (resultsDiv) {
+            resultsDiv.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> 검색중...</div>';
+        }
+        
+        try {
+            const results = await API.searchStocks(query);
+            this.displayResults(results);
+        } catch (err) {
+            error('Search failed:', err);
+            if (resultsDiv) {
+                resultsDiv.innerHTML = '<div class="error">검색 실패</div>';
+            }
+        }
+    },
+    
+    displayResults(results) {
+        const resultsDiv = document.getElementById('searchResults');
+        if (!resultsDiv) return;
+        
+        if (!results || results.length === 0) {
+            resultsDiv.innerHTML = '<div class="no-results">결과 없음</div>';
+            return;
+        }
+        
+        resultsDiv.innerHTML = results.map(r => `
+            <div class="search-result-item" onclick="SearchManager.addStock('${r.name}', '${r.ticker}')">
+                <span class="stock-name">${r.name}</span>
+                <span class="stock-code">${r.ticker}</span>
+                <span class="market-badge">${r.market}</span>
+            </div>
+        `).join('');
+    },
+    
+    async addStock(name, ticker) {
+        if (typeof CustomChartsManager !== 'undefined') {
+            await CustomChartsManager.addStock(ticker);
+        }
+        const resultsDiv = document.getElementById('searchResults');
+        if (resultsDiv) resultsDiv.innerHTML = '';
+    }
+};
+
+// ========================================
+// Part 10: Custom Charts Manager
+// ========================================
+
+const CustomChartsManager = {
+    initialized: false,
+    
+    init() {
+        if (this.initialized) return;
+        
         const addBtn = document.getElementById('addCustomChartBtn');
         const input = document.getElementById('customTickerInput');
         
@@ -1028,67 +806,61 @@ const CustomChartsManager = {
             });
         }
         
+        // Load saved charts
         this.loadSavedCharts();
+        
+        this.initialized = true;
+        log('CustomChartsManager initialized');
     },
     
     async addCustomChart() {
         const input = document.getElementById('customTickerInput');
-        if (!input) return;
+        const ticker = input?.value?.trim();
         
-        let ticker = input.value.trim();
         if (!ticker) {
-            Notification.toast('입력 오류', '종목코드를 입력해주세요.', 'error');
+            Notification.toast('오류', '종목코드를 입력해주세요.', 'error');
             return;
         }
         
-        if (/^\d{6}$/.test(ticker)) {
-            ticker = `${ticker}.KS`;
-        }
-        
-        const addBtn = document.getElementById('addCustomChartBtn');
-        if (addBtn) {
-            addBtn.disabled = true;
-            addBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 추가 중...';
-        }
-        
+        await this.addStock(ticker);
+        if (input) input.value = '';
+    },
+    
+    async addStock(ticker) {
         try {
-            const data = await API.getStockData(ticker);
+            Notification.toast('정보', '데이터 로딩중...', 'info');
             
-            if (data) {
-                const saved = JSON.parse(localStorage.getItem('customCharts') || '[]');
-                if (!saved.includes(ticker)) {
-                    saved.push(ticker);
-                    localStorage.setItem('customCharts', JSON.stringify(saved));
-                }
-                
+            const data = await API.getStockData(ticker);
+            if (data && data.success) {
                 this.addStockCard(ticker, data);
-                input.value = '';
-                
-                Notification.toast('추가 완료', `${data.name || ticker} 차트가 추가되었습니다.`, 'success');
+                this.saveToLocalStorage(ticker);
+                Notification.toast('성공', `${data.name || ticker} 추가됨`, 'success');
+            } else {
+                Notification.toast('오류', '종목을 찾을 수 없습니다.', 'error');
             }
-        } catch (error) {
-            Notification.toast('오류', '종목 데이터를 가져올 수 없습니다.', 'error');
-        } finally {
-            if (addBtn) {
-                addBtn.disabled = false;
-                addBtn.innerHTML = '<i class="fas fa-plus"></i> 차트 추가';
-            }
+        } catch (err) {
+            error('Failed to add custom chart:', err);
+            Notification.toast('오류', '데이터 로딩 실패', 'error');
         }
     },
     
     addStockCard(ticker, data) {
         const container = document.getElementById('customStocksGrid');
+        if (!container) {
+            error('Custom stocks grid not found');
+            return;
+        }
+        
         const emptyState = document.getElementById('emptyCustomCharts');
-        
-        if (!container) return;
-        
         if (emptyState) {
             emptyState.style.display = 'none';
         }
         
-        const cardId = `custom-card-${ticker.replace(/\./g, '_')}`;
-        const chartId = `chart-${ticker.replace(/\./g, '_')}`;
+        const safeTicker = ticker.replace(/\./g, '_');
+        const cardId = `custom-card-${safeTicker}`;
+        const chartId = `chart-custom-${safeTicker}`;
         
+        // Check for duplicates
         if (document.getElementById(cardId)) {
             Notification.toast('알림', '이미 추가된 종목입니다.', 'warning');
             return;
@@ -1097,86 +869,320 @@ const CustomChartsManager = {
         const card = StockCard.create(cardId, chartId, data, ticker, true);
         container.appendChild(card);
         
+        // Render chart after DOM update
         setTimeout(() => {
             const chartContainer = document.getElementById(chartId);
             if (chartContainer) {
-                chartContainer.style.width = '100%';
-                chartContainer.style.height = '360px';
-                ChartRenderer.render(chartId, data, data.name);
+                ChartRenderer.render(chartId, data, data.name || ticker);
             }
         }, 100);
     },
     
     removeCustomChart(ticker) {
-        const cardId = `custom-card-${ticker.replace(/\./g, '_')}`;
-        const chartId = `chart-${ticker.replace(/\./g, '_')}`;
+        const safeTicker = ticker.replace(/\./g, '_');
+        const cardId = `custom-card-${safeTicker}`;
+        const chartId = `chart-custom-${safeTicker}`;
         
+        // Dispose chart
         if (AppState.charts[chartId]) {
-            AppState.charts[chartId].dispose();
+            try {
+                AppState.charts[chartId].dispose();
+            } catch (e) {
+                error('Error disposing chart:', e);
+            }
             delete AppState.charts[chartId];
         }
         
+        // Remove card
         const card = document.getElementById(cardId);
         if (card) {
             card.remove();
         }
         
-        const saved = JSON.parse(localStorage.getItem('customCharts') || '[]');
-        const index = saved.indexOf(ticker);
-        if (index > -1) {
-            saved.splice(index, 1);
-            localStorage.setItem('customCharts', JSON.stringify(saved));
-        }
+        // Update local storage
+        this.removeFromLocalStorage(ticker);
         
+        // Show empty state if no cards left
         const container = document.getElementById('customStocksGrid');
         const emptyState = document.getElementById('emptyCustomCharts');
-        if (container && emptyState && container.children.length <= 1) {
-            emptyState.style.display = 'block';
+        if (container && emptyState) {
+            const cards = container.querySelectorAll('.stock-card');
+            if (cards.length === 0) {
+                emptyState.style.display = 'block';
+            }
+        }
+        
+        Notification.toast('성공', '차트가 삭제되었습니다.', 'success');
+    },
+    
+    saveToLocalStorage(ticker) {
+        try {
+            const saved = JSON.parse(localStorage.getItem('customCharts') || '[]');
+            if (!saved.includes(ticker)) {
+                saved.push(ticker);
+                localStorage.setItem('customCharts', JSON.stringify(saved));
+            }
+        } catch (e) {
+            error('LocalStorage error:', e);
+        }
+    },
+    
+    removeFromLocalStorage(ticker) {
+        try {
+            const saved = JSON.parse(localStorage.getItem('customCharts') || '[]');
+            const index = saved.indexOf(ticker);
+            if (index > -1) {
+                saved.splice(index, 1);
+                localStorage.setItem('customCharts', JSON.stringify(saved));
+            }
+        } catch (e) {
+            error('LocalStorage error:', e);
         }
     },
     
     async loadSavedCharts() {
-        const saved = JSON.parse(localStorage.getItem('customCharts') || '[]');
-        
-        for (const ticker of saved) {
-            try {
-                const data = await API.getStockData(ticker);
-                if (data) {
-                    this.addStockCard(ticker, data);
+        try {
+            const saved = JSON.parse(localStorage.getItem('customCharts') || '[]');
+            log('Loading saved charts:', saved);
+            
+            for (const ticker of saved) {
+                try {
+                    const data = await API.getStockData(ticker);
+                    if (data && data.success) {
+                        this.addStockCard(ticker, data);
+                    }
+                } catch (err) {
+                    error(`Failed to load chart for ${ticker}:`, err);
                 }
-            } catch (error) {
-                console.warn(`Failed to load custom chart for ${ticker}:`, error);
             }
+        } catch (e) {
+            error('Error loading saved charts:', e);
         }
     }
 };
 
 // ========================================
-// Part 4: Initialization
+// Part 11: Settings Manager
+// ========================================
+
+const SettingsManager = {
+    initialized: false,
+    
+    init() {
+        if (this.initialized) return;
+        
+        const themeBtn = document.getElementById('themeToggle');
+        if (themeBtn) {
+            themeBtn.addEventListener('click', () => this.toggleTheme());
+        }
+        
+        const refreshBtn = document.getElementById('refreshBtn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => {
+                Notification.toast('정보', '새로고침중...', 'info');
+                App.loadStocks();
+            });
+        }
+        
+        // Apply initial theme
+        this.applyTheme();
+        
+        this.initialized = true;
+        log('SettingsManager initialized');
+    },
+    
+    toggleTheme() {
+        AppState.currentTheme = AppState.currentTheme === 'light' ? 'dark' : 'light';
+        localStorage.setItem('theme', AppState.currentTheme);
+        this.applyTheme();
+        Notification.toast('테마', AppState.currentTheme === 'light' ? '라이트 모드' : '다크 모드', 'info');
+    },
+    
+    applyTheme() {
+        document.documentElement.setAttribute('data-theme', AppState.currentTheme);
+        ChartRenderer.updateTheme();
+    }
+};
+
+// ========================================
+// Part 12: Main App Controller
+// ========================================
+
+const App = {
+    async init() {
+        log('App initializing...');
+        
+        try {
+            await this.loadStocks();
+            await this.updateMarketStatus();
+            this.startAutoRefresh();
+            
+            log('App initialized successfully');
+        } catch (err) {
+            error('App initialization error:', err);
+        }
+    },
+    
+    async loadStocks() {
+        const grid = document.getElementById('mainStocksGrid');
+        if (!grid) {
+            error('Main stocks grid not found');
+            return;
+        }
+        
+        // Show loading
+        grid.innerHTML = `
+            <div class="loading-skeleton">
+                <div class="skeleton-card"></div>
+                <div class="skeleton-card"></div>
+            </div>
+        `;
+        
+        try {
+            const result = await API.get('/api/stocks');
+            
+            if (result.success && result.data) {
+                this.renderStocks(result.data);
+                this.updateLastUpdateTime();
+            } else {
+                error('API returned failure:', result);
+                grid.innerHTML = '<div class="error-state">데이터를 불러올 수 없습니다.</div>';
+            }
+        } catch (err) {
+            error('Failed to load stocks:', err);
+            grid.innerHTML = '<div class="error-state">서버 연결 실패</div>';
+        }
+    },
+    
+    renderStocks(stocksData) {
+        const grid = document.getElementById('mainStocksGrid');
+        if (!grid) return;
+        
+        grid.innerHTML = '';
+        
+        if (!stocksData || Object.keys(stocksData).length === 0) {
+            grid.innerHTML = '<div class="empty-state">표시할 종목이 없습니다.</div>';
+            return;
+        }
+        
+        Object.entries(stocksData).forEach(([ticker, data]) => {
+            const safeTicker = ticker.replace(/\./g, '_');
+            const cardId = `card-${safeTicker}`;
+            const chartId = `chart-${safeTicker}`;
+            
+            const card = StockCard.create(cardId, chartId, data, ticker, false);
+            grid.appendChild(card);
+            
+            // Render chart after DOM insertion
+            setTimeout(() => {
+                const container = document.getElementById(chartId);
+                if (container) {
+                    ChartRenderer.render(chartId, data, data.name || ticker);
+                }
+            }, 100);
+        });
+    },
+    
+    async updateMarketStatus() {
+        try {
+            const result = await API.get('/api/market-status');
+            const statusEl = document.getElementById('marketStatus');
+            
+            if (statusEl && result.success) {
+                const isOpen = result.is_open;
+                statusEl.innerHTML = `
+                    <span class="status-dot ${isOpen ? 'open' : 'closed'}"></span>
+                    <span class="status-text">${isOpen ? '시장 개장' : '시장 마감'}</span>
+                `;
+            }
+        } catch (err) {
+            error('Failed to update market status:', err);
+        }
+    },
+    
+    updateLastUpdateTime() {
+        const el = document.getElementById('lastUpdate');
+        if (el) {
+            el.textContent = new Date().toLocaleString('ko-KR');
+        }
+    },
+    
+    startAutoRefresh() {
+        if (AppState.autoRefreshInterval) {
+            clearInterval(AppState.autoRefreshInterval);
+        }
+        
+        AppState.autoRefreshInterval = setInterval(() => {
+            if (AppState.autoRefreshEnabled) {
+                this.loadStocks();
+            }
+        }, CONFIG.REFRESH_INTERVAL);
+    },
+    
+    stopAutoRefresh() {
+        if (AppState.autoRefreshInterval) {
+            clearInterval(AppState.autoRefreshInterval);
+            AppState.autoRefreshInterval = null;
+        }
+    },
+    
+    loadSettings() {
+        // Theme is already loaded in AppState initialization
+        log('Settings loaded, theme:', AppState.currentTheme);
+    },
+    
+    saveSettings() {
+        localStorage.setItem('theme', AppState.currentTheme);
+    }
+};
+
+// ========================================
+// Part 13: Initialization
 // ========================================
 
 document.addEventListener('DOMContentLoaded', () => {
-    App.loadSettings();
+    log('DOM Content Loaded - Starting initialization');
     
-    SearchManager.init();
-    SettingsManager.init();
-    TabManager.init();
-    PortfolioManager.init();
-    BacktestManager.init();
-    CustomChartsManager.init();
+    // Initialize notification system first
+    Notification.init();
     
-    App.init();
-    
-    window.SearchManager = SearchManager;
-    window.PortfolioManager = PortfolioManager;
-    window.CustomChartsManager = CustomChartsManager;
+    // Initialize all managers
+    try {
+        TabManager.init();
+        SettingsManager.init();
+        SearchManager.init();
+        PortfolioManager.init();
+        BacktestManager.init();
+        CustomChartsManager.init();
+        
+        // Start main app
+        App.init();
+        
+        log('All systems initialized');
+    } catch (err) {
+        error('Initialization error:', err);
+        Notification.toast('오류', '초기화 중 오류가 발생했습니다.', 'error');
+    }
 });
 
+// Cleanup on page unload
 window.addEventListener('beforeunload', () => {
     App.stopAutoRefresh();
     App.saveSettings();
     
+    // Dispose all charts
     Object.values(AppState.charts).forEach(chart => {
-        if (chart) chart.dispose();
+        if (chart && typeof chart.dispose === 'function') {
+            try {
+                chart.dispose();
+            } catch (e) {
+                // Ignore dispose errors
+            }
+        }
     });
 });
+
+// Expose managers to window for onclick handlers
+window.SearchManager = SearchManager;
+window.PortfolioManager = PortfolioManager;
+window.CustomChartsManager = CustomChartsManager;
