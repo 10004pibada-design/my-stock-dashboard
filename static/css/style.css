@@ -283,6 +283,18 @@ body {
     to { transform: rotate(360deg); }
 }
 
+/* 로그아웃 버튼 */
+.logout-btn {
+    background: rgba(239, 68, 68, 0.2) !important;
+    color: #ef4444 !important;
+    margin-left: 8px;
+}
+
+.logout-btn:hover {
+    background: rgba(239, 68, 68, 0.4) !important;
+    color: #fff !important;
+}
+
 /* ========================================
    메인 컨테이너
    ======================================== */

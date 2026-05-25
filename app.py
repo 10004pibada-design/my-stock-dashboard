@@ -3,8 +3,9 @@
 실시간 주식 데이터 제공 및 기술적 분석 API
 """
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for
 from flask_cors import CORS
+from functools import wraps
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -15,7 +16,41 @@ from functools import lru_cache
 import time
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
 CORS(app)
+
+# 비밀번호 설정
+ACCESS_PASSWORD = "89780186"
+
+
+def login_required(f):
+    """로그인 필요 데코레이터"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('authenticated'):
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """로그인 페이지"""
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        if password == ACCESS_PASSWORD:
+            session['authenticated'] = True
+            return redirect(url_for('index'))
+        else:
+            return render_template('login.html', error='비밀번호가 올바르지 않습니다.')
+    return render_template('login.html')
+
+
+@app.route('/logout')
+def logout():
+    """로그아웃"""
+    session.pop('authenticated', None)
+    return redirect(url_for('login'))
 
 
 def clean_nan_values(obj):
@@ -280,12 +315,14 @@ def fetch_stock_data(ticker, period='1y'):
 
 
 @app.route('/')
+@login_required
 def index():
     """메인 페이지"""
     return render_template('index.html')
 
 
 @app.route('/api/stock/<ticker>')
+@login_required
 def get_stock(ticker):
     """단일 종목 데이터 API"""
     period = request.args.get('period', '1y')
@@ -296,6 +333,7 @@ def get_stock(ticker):
 
 
 @app.route('/api/stocks')
+@login_required
 def get_all_stocks():
     """모든 관심 종목 데이터 API"""
     user_tickers = load_user_tickers()
@@ -316,6 +354,7 @@ def get_all_stocks():
 
 
 @app.route('/api/search')
+@login_required
 def search_stocks():
     """주식 검색 API (한국 주식)"""
     query = request.args.get('q', '').strip()
@@ -353,6 +392,7 @@ def search_stocks():
 
 
 @app.route('/api/tickers', methods=['GET', 'POST', 'DELETE'])
+@login_required
 def manage_tickers():
     """관심 종목 관리 API"""
     if request.method == 'GET':
@@ -407,6 +447,7 @@ def manage_tickers():
 
 
 @app.route('/api/market-status')
+@login_required
 def market_status():
     """시장 상태 확인 API"""
     now = datetime.now()
