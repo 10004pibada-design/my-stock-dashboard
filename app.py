@@ -13,7 +13,7 @@ import json
 import os
 from datetime import datetime, timedelta
 from functools import lru_cache
-from typing import List
+from typing import List, Dict
 import time
 
 app = Flask(__name__)
