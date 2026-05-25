@@ -2066,10 +2066,577 @@ App.init = async function() {
 // ========================================
 // 앱 초기화 시 WebSocket 연결 및 포트폴리오 로드
 // ========================================
-// 전역 함수 노출 (HTML에서 사용)
+// ========================================
+// 탭 네비게이션
+// ========================================
+const TabManager = {
+    init() {
+        const tabButtons = document.querySelectorAll('.tab-btn');
+        const tabContents = document.querySelectorAll('.tab-content');
+        
+        tabButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const targetTab = btn.dataset.tab;
+                
+                // 버튼 액티브 선택
+                tabButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                
+                // 컨텐츠 전환
+                tabContents.forEach(content => {
+                    content.classList.remove('active');
+                    if (content.id === targetTab + 'Tab') {
+                        content.classList.add('active');
+                    }
+                });
+                
+                // 컨텐츠 변경 시 차트 리사이즈
+                setTimeout(() => {
+                    Object.values(AppState.charts).forEach(chart => {
+                        if (chart && chart.resize) {
+                            chart.resize();
+                        }
+                    });
+                    Object.values(CustomChartsManager.charts).forEach(chart => {
+                        if (chart && chart.resize) {
+                            chart.resize();
+                        }
+                    });
+                }, 100);
+            });
+        });
+    }
+};
+
+// ========================================
+// 추가 차트 관리 (Custom Charts) - 업그레이드된 버전
+// ========================================
+const CustomChartsManager = {
+    customTickers: [],
+    charts: {},
+    
+    init() {
+        this.loadCustomCharts();
+        this.bindEvents();
+        this.renderAllCharts();
+    },
+    
+    loadCustomCharts() {
+        const saved = localStorage.getItem('customCharts');
+        if (saved) {
+            try {
+                this.customTickers = JSON.parse(saved);
+            } catch (e) {
+                this.customTickers = [];
+            }
+        }
+        this.updateEmptyState();
+    },
+    
+    saveCustomCharts() {
+        localStorage.setItem('customCharts', JSON.stringify(this.customTickers));
+        this.updateEmptyState();
+    },
+    
+    bindEvents() {
+        const addBtn = document.getElementById('addCustomChartBtn');
+        const input = document.getElementById('customTickerInput');
+        
+        if (addBtn) {
+            addBtn.addEventListener('click', () => this.addCustomChart());
+        }
+        
+        if (input) {
+            input.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') this.addCustomChart();
+            });
+        }
+        
+        // 추천 종목 칩 클릭
+        document.querySelectorAll('.custom-add-form .chip, .quick-add-chips .chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                const code = chip.dataset.code;
+                const name = chip.textContent;
+                this.addCustomChartWithName(code, name);
+            });
+        });
+    },
+    
+    async addCustomChart() {
+        const input = document.getElementById('customTickerInput');
+        if (!input) return;
+        
+        const ticker = input.value.trim().toUpperCase();
+        
+        if (!ticker) {
+            Notification.toast('입력 오류', '종목코드를 입력해 주세요.', 'error');
+            return;
+        }
+        
+        // 중복 체크
+        if (this.customTickers.some(t => t.ticker === ticker)) {
+            Notification.toast('중복 오류', '이미 추가된 종목입니다.', 'error');
+            return;
+        }
+        
+        // 메인 그리드와 중복 체크
+        if (AppState.tickers[ticker]) {
+            Notification.toast('중복 오류', '메인 차트에 이미 있는 종목입니다.', 'error');
+            return;
+        }
+        
+        input.value = '';
+        
+        // 바로 추가 (이름은 나중에 업데이트)
+        this.addCustomChartWithName(ticker, ticker);
+        
+        // 종목 정보 가져와서 이름 업데이트
+        try {
+            const response = await fetch(`/api/stock/${ticker}`);
+            if (response.ok) {
+                const data = await response.json();
+                if (data.name) {
+                    // 이름 업데이트
+                    const item = this.customTickers.find(t => t.ticker === ticker);
+                    if (item) {
+                        item.name = data.name;
+                        this.saveCustomCharts();
+                        this.updateCardTitle(ticker, data.name);
+                    }
+                }
+            }
+        } catch (e) {
+            console.log('종목명 로드 실패:', e);
+        }
+    },
+    
+    addCustomChartWithName(ticker, name) {
+        // 중복 체크
+        if (this.customTickers.some(t => t.ticker === ticker)) {
+            Notification.toast('중복 오류', '이미 추가된 종목입니다.', 'error');
+            return;
+        }
+        
+        this.customTickers.push({
+            ticker: ticker,
+            name: name,
+            addedAt: new Date().toISOString()
+        });
+        
+        this.saveCustomCharts();
+        this.renderChartCard(ticker, name);
+        
+        // WebSocket 구독
+        WebSocketManager.subscribe(ticker);
+        
+        Notification.toast('차트 추가 완료', `${name} 차트가 추가되었습니다.`, 'success');
+    },
+    
+    removeCustomChart(ticker) {
+        this.customTickers = this.customTickers.filter(t => t.ticker !== ticker);
+        this.saveCustomCharts();
+        
+        // 차트 인스턴스 정리
+        const chartId = `custom-chart-${ticker.replace(/\./g, '_')}`;
+        if (this.charts[chartId]) {
+            this.charts[chartId].dispose();
+            delete this.charts[chartId];
+        }
+        
+        // DOM에서 제거
+        const card = document.getElementById(`custom-card-${ticker.replace(/\./g, '_')}`);
+        if (card) {
+            card.remove();
+        }
+        
+        // WebSocket 구독 취소
+        WebSocketManager.unsubscribe(ticker);
+        
+        this.updateEmptyState();
+        Notification.toast('차트 삭제 완료', '차트가 삭제되었습니다.', 'success');
+    },
+    
+    updateEmptyState() {
+        const grid = document.getElementById('customStocksGrid');
+        const emptyState = document.getElementById('emptyCustomCharts');
+        
+        if (!grid) return;
+        
+        if (this.customTickers.length === 0) {
+            if (!emptyState) {
+                grid.innerHTML = `
+                    <div class="empty-state-custom" id="emptyCustomCharts">
+                        <i class="fas fa-chart-bar"></i>
+                        <p>추가된 차트가 없습니다.<br>위에서 종목을 추가해 보세요!</p>
+                    </div>
+                `;
+            }
+        } else {
+            if (emptyState) {
+                emptyState.remove();
+            }
+        }
+    },
+    
+    updateCardTitle(ticker, name) {
+        const card = document.getElementById(`custom-card-${ticker.replace(/\./g, '_')}`);
+        if (card) {
+            const title = card.querySelector('.card-title h3');
+            if (title) title.textContent = name;
+        }
+    },
+    
+    async renderAllCharts() {
+        for (const item of this.customTickers) {
+            await this.renderChartCard(item.ticker, item.name);
+        }
+    },
+    
+    async renderChartCard(ticker, name) {
+        const grid = document.getElementById('customStocksGrid');
+        if (!grid) return;
+        
+        // 빈 상태 제거
+        const emptyState = document.getElementById('emptyCustomCharts');
+        if (emptyState) emptyState.remove();
+        
+        const cardId = `custom-card-${ticker.replace(/\./g, '_')}`;
+        const chartId = `custom-chart-${ticker.replace(/\./g, '_')}`;
+        
+        // 이미 존재하면 업데이트만
+        if (document.getElementById(cardId)) {
+            this.loadChartData(ticker, chartId);
+            return;
+        }
+        
+        // 메인 카드와 동일한 구조의 카드 생성
+        const card = document.createElement('div');
+        card.id = cardId;
+        card.className = 'stock-card';
+        card.dataset.ticker = ticker;
+        card.innerHTML = `
+            <div class="card-header">
+                <div class="card-title">
+                    <div class="signal-icon-placeholder" id="custom-signal-${ticker.replace(/\./g, '_')}">
+                        <span class="signal-icon loading">📌</span>
+                    </div>
+                    <div>
+                        <h3>${name}</h3>
+                        <span class="card-code">${ticker}</span>
+                    </div>
+                </div>
+                <div class="card-actions">
+                    <span class="change-badge neutral" id="custom-change-${ticker.replace(/\./g, '_')}">-</span>
+                    <button class="btn-delete-custom" onclick="CustomChartsManager.removeCustomChart('${ticker}')" title="차트 삭제">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="chart-container" id="${chartId}"></div>
+                <div class="kpi-grid">
+                    <div class="kpi-item">
+                        <span class="kpi-label">현재가</span>
+                        <span class="kpi-value" id="custom-price-${ticker.replace(/\./g, '_')}">-</span>
+                    </div>
+                    <div class="kpi-item">
+                        <span class="kpi-label">거래대금</span>
+                        <span class="kpi-value" id="custom-vol-${ticker.replace(/\./g, '_')}">-</span>
+                    </div>
+                    <div class="kpi-item">
+                        <span class="kpi-label">MA20</span>
+                        <span class="kpi-value" id="custom-ma20-${ticker.replace(/\./g, '_')}">-</span>
+                    </div>
+                    <div class="kpi-item">
+                        <span class="kpi-label">MA60</span>
+                        <span class="kpi-value" id="custom-ma60-${ticker.replace(/\./g, '_')}">-</span>
+                    </div>
+                </div>
+                <div class="signal-box neutral" id="custom-signal-box-${ticker.replace(/\./g, '_')}">
+                    <span class="signal-icon">📌</span>
+                    <span class="signal-title">분석 중...</span>
+                    <span class="signal-reason">데이터를 불러오는 중입니다.</span>
+                </div>
+            </div>
+        `;
+        
+        grid.appendChild(card);
+        
+        // 데이터 로드 및 차트 렌더링
+        await this.loadChartData(ticker, chartId);
+    },
+    
+    async loadChartData(ticker, chartId) {
+        try {
+            const response = await fetch(`/api/stock/${ticker}`);
+            if (!response.ok) throw new Error('데이터 로드 실패');
+            
+            const data = await response.json();
+            
+            // 카드 업데이트
+            this.updateCustomCard(ticker, data);
+            
+            // 차트 렌더링
+            this.renderCustomChart(chartId, data);
+            
+        } catch (error) {
+            console.error(`추가 차트 로드 오류 (${ticker}):`, error);
+            this.showErrorState(ticker);
+        }
+    },
+    
+    updateCustomCard(ticker, data) {
+        const suffix = ticker.replace(/\./g, '_');
+        
+        // 타이틈 업데이트
+        if (data.name) {
+            this.updateCardTitle(ticker, data.name);
+        }
+        
+        // 등락률 배지
+        const changeBadge = document.getElementById(`custom-change-${suffix}`);
+        if (changeBadge && data.change_pct !== undefined) {
+            const changeClass = data.change_pct > 0 ? 'up' : data.change_pct < 0 ? 'down' : 'neutral';
+            const changeIcon = data.change_pct > 0 ? '▲' : data.change_pct < 0 ? '▼' : '-';
+            changeBadge.className = `change-badge ${changeClass}`;
+            changeBadge.innerHTML = `${changeIcon} ${Math.abs(data.change_pct).toFixed(2)}%`;
+        }
+        
+        // KPI 값 업데이트
+        const priceEl = document.getElementById(`custom-price-${suffix}`);
+        const volEl = document.getElementById(`custom-vol-${suffix}`);
+        const ma20El = document.getElementById(`custom-ma20-${suffix}`);
+        const ma60El = document.getElementById(`custom-ma60-${suffix}`);
+        
+        if (priceEl && data.latest_price) {
+            const changeClass = data.change_pct > 0 ? 'up' : data.change_pct < 0 ? 'down' : 'neutral';
+            priceEl.className = `kpi-value ${changeClass}`;
+            priceEl.innerHTML = `${Utils.formatNumber(Math.round(data.latest_price))}<span class="unit">원</span>`;
+        }
+        
+        if (volEl && data.latest_vol) {
+            volEl.innerHTML = `${Utils.formatNumber(data.latest_vol)}<span class="unit">주</span>`;
+        }
+        
+        if (ma20El && data.ma20 && data.ma20.length > 0) {
+            ma20El.textContent = Utils.formatNumber(Math.round(data.ma20[data.ma20.length - 1]));
+        }
+        
+        if (ma60El && data.ma60 && data.ma60.length > 0) {
+            ma60El.textContent = Utils.formatNumber(Math.round(data.ma60[data.ma60.length - 1]));
+        }
+        
+        // 신호 업데이트
+        const signalBox = document.getElementById(`custom-signal-box-${suffix}`);
+        if (signalBox && data.signal_class) {
+            signalBox.className = `signal-box ${data.signal_class}`;
+            signalBox.innerHTML = `
+                <span class="signal-icon">${this.getSignalIcon(data.signal_class)}</span>
+                <span class="signal-title">${data.signal_text || '분석 완료'}</span>
+                <span class="signal-reason">${data.signal_reason || ''}</span>
+            `;
+        }
+    },
+    
+    getSignalIcon(signalClass) {
+        const icons = {
+            'strong-buy': '🚀',
+            'buy': '📈',
+            'hold': '⚖️',
+            'sell': '📉',
+            'caution': '⚠️',
+            'neutral': '📌'
+        };
+        return icons[signalClass] || '📌';
+    },
+    
+    renderCustomChart(chartId, data) {
+        const container = document.getElementById(chartId);
+        if (!container) return;
+        
+        // 기존 차트 정리
+        if (this.charts[chartId]) {
+            this.charts[chartId].dispose();
+        }
+        
+        const chart = echarts.init(container);
+        this.charts[chartId] = chart;
+        
+        // kline 데이터 처리 - API는 [open, close, low, high] 형태로 반환
+        const klineData = data.kline || [];
+        const dates = data.dates || [];
+        const ma20 = data.ma20 || [];
+        const ma60 = data.ma60 || [];
+        
+        // 취드 스타일로 변환 [open, close, low, high] -> ECharts [open, close, lowest, highest]
+        // API에서 반환하는 kline은 [[open, close, low, high], ...] 형태
+        const candleData = klineData.map(d => [d[0], d[1], d[2], d[3]]);
+        
+        const option = {
+            backgroundColor: 'transparent',
+            tooltip: {
+                trigger: 'axis',
+                axisPointer: {
+                    type: 'cross',
+                    label: { backgroundColor: '#6a7985' }
+                },
+                backgroundColor: 'rgba(30, 41, 59, 0.95)',
+                borderColor: '#475569',
+                textStyle: { color: '#e2e8f0', fontSize: 12 },
+                formatter: function(params) {
+                    let html = `<div style="font-weight:600;margin-bottom:5px;">${params[0].axisValue}</div>`;
+                    params.forEach(p => {
+                        const color = p.color;
+                        if (p.seriesName === '쿠들스틱') {
+                            const d = p.data;
+                            html += `<div style="margin:3px 0;"><span style="color:${color};">쿠들:</span> 오픈 ${d[1]}, 폭가 ${d[2]}, 저가 ${d[3]}, 종가 ${d[0]}</div>`;
+                        } else {
+                            html += `<div style="display:flex;align-items:center;margin:3px 0;">
+                                <span style="display:inline-block;width:10px;height:10px;background:${color};border-radius:50%;margin-right:8px;"></span>
+                                <span style="flex:1;">${p.seriesName}:</span>
+                                <span style="font-weight:600;margin-left:10px;">${p.value.toLocaleString()}</span>
+                            </div>`;
+                        }
+                    });
+                    return html;
+                }
+            },
+            legend: {
+                data: ['쿠들스틱', 'MA20', 'MA60'],
+                top: 0,
+                textStyle: {
+                    fontSize: 11,
+                    color: document.body.classList.contains('dark-mode') ? '#94a3b8' : '#64748b'
+                }
+            },
+            grid: {
+                left: '3%',
+                right: '4%',
+                bottom: '15%',
+                top: '15%',
+                containLabel: true
+            },
+            xAxis: {
+                type: 'category',
+                data: dates,
+                axisLine: {
+                    lineStyle: {
+                        color: document.body.classList.contains('dark-mode') ? '#475569' : '#cbd5e1'
+                    }
+                },
+                axisLabel: {
+                    color: document.body.classList.contains('dark-mode') ? '#94a3b8' : '#64748b',
+                    fontSize: 10,
+                    formatter: function(value) {
+                        const date = new Date(value);
+                        return `${date.getMonth() + 1}/${date.getDate()}`;
+                    }
+                }
+            },
+            yAxis: {
+                type: 'value',
+                axisLine: {
+                    lineStyle: {
+                        color: document.body.classList.contains('dark-mode') ? '#475569' : '#cbd5e1'
+                    }
+                },
+                axisLabel: {
+                    color: document.body.classList.contains('dark-mode') ? '#94a3b8' : '#64748b',
+                    fontSize: 10,
+                    formatter: function(value) {
+                        if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
+                        if (value >= 1000) return (value / 1000).toFixed(0) + 'K';
+                        return value;
+                    }
+                },
+                splitLine: {
+                    lineStyle: {
+                        color: document.body.classList.contains('dark-mode') ? 'rgba(71, 85, 105, 0.5)' : '#f1f5f9'
+                    }
+                }
+            },
+            dataZoom: [{
+                type: 'inside',
+                start: Math.max(0, 100 - (candleData.length > 60 ? 60 / candleData.length * 100 : 100)),
+                end: 100
+            }],
+            series: [
+                {
+                    name: '쿠들스틱',
+                    type: 'candlestick',
+                    data: candleData,
+                    itemStyle: {
+                        color: '#ef4444',
+                        color0: '#3b82f6',
+                        borderColor: '#ef4444',
+                        borderColor0: '#3b82f6'
+                    }
+                },
+                {
+                    name: 'MA20',
+                    type: 'line',
+                    data: ma20,
+                    smooth: true,
+                    symbol: 'none',
+                    lineStyle: { width: 1.5, color: '#f59e0b' },
+                    itemStyle: { color: '#f59e0b' }
+                },
+                {
+                    name: 'MA60',
+                    type: 'line',
+                    data: ma60,
+                    smooth: true,
+                    symbol: 'none',
+                    lineStyle: { width: 1.5, color: '#ec4899' },
+                    itemStyle: { color: '#ec4899' }
+                }
+            ]
+        };
+        
+        chart.setOption(option);
+        
+        // 반응형
+        window.addEventListener('resize', () => chart.resize());
+    },
+    
+    showErrorState(ticker) {
+        const suffix = ticker.replace(/\./g, '_');
+        const signalBox = document.getElementById(`custom-signal-box-${suffix}`);
+        if (signalBox) {
+            signalBox.className = 'signal-box sell';
+            signalBox.innerHTML = `
+                <span class="signal-icon">⚠️</span>
+                <span class="signal-title">데이터 로드 실패</span>
+                <span class="signal-reason">종목 코드를 확인해 주세요.</span>
+            `;
+        }
+    },
+    
+    refreshAllCharts() {
+        this.customTickers.forEach(item => {
+            const chartId = `custom-chart-${item.ticker.replace(/\./g, '_')}`;
+            this.loadChartData(item.ticker, chartId);
+        });
+    }
+};
+
+// ========================================
+// 초기화 업데이트 (탭 + 추가 차트)
+// ========================================
+const originalAppInit = App.init;
+App.init = async function() {
+    await originalAppInit.call(this);
+    TabManager.init();
+    CustomChartsManager.init();
+};
+
+// ========================================
+// 전역 함수 노출
+// ========================================
 window.SearchManager = SearchManager;
 window.StockCard = StockCard;
 window.WebSocketManager = WebSocketManager;
 window.PortfolioManager = PortfolioManager;
 window.BacktestManager = BacktestManager;
 window.CustomChartsManager = CustomChartsManager;
+window.TabManager = TabManager;

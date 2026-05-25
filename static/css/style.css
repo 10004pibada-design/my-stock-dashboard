@@ -1694,13 +1694,213 @@ body {
     line-height: 1.6;
 }
 
-/* 반응형 */
+/* ========================================
+   탭 네비게이션
+   ======================================== */
+.tab-navigation {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    position: sticky;
+    top: 73px;
+    z-index: 99;
+}
+
+.tab-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+    display: flex;
+    gap: 0.5rem;
+}
+
+.tab-btn {
+    padding: 1rem 1.5rem;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s ease;
+}
+
+.tab-btn:hover {
+    color: var(--accent-blue);
+    background: var(--bg-hover);
+}
+
+.tab-btn.active {
+    color: var(--accent-blue);
+    border-bottom-color: var(--accent-blue);
+    background: var(--bg-hover);
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* ========================================
+   세션 타이틀
+   ======================================== */
+.section-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 2rem 0 1rem;
+}
+
+.section-title i {
+    color: var(--accent-blue);
+}
+
+.main-charts-section .section-title i {
+    color: var(--accent-orange);
+}
+
+.custom-charts-section .section-title i {
+    color: var(--accent-green);
+}
+
+.section-header {
+    margin-bottom: 1rem;
+}
+
+.section-desc {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+}
+
+/* ========================================
+   추가 차트 세션
+   ======================================== */
+.custom-charts-section {
+    margin-top: 3rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.custom-add-form {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--border-color);
+}
+
+.custom-add-form .input-group {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.custom-add-form input[type="text"] {
+    flex: 1;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--card-bg);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    transition: all 0.2s ease;
+}
+
+.custom-add-form input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.quick-add-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.quick-add-chips .label {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-right: 0.25rem;
+}
+
+/* 빈 상태 */
+.empty-state-custom {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 3rem;
+    color: var(--text-muted);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    border: 2px dashed var(--border-color);
+}
+
+.empty-state-custom i {
+    font-size: 2.5rem;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
+
+.empty-state-custom p {
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+
+/* 추가 카드 삭제 버튼 */
+.card-actions-custom {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    z-index: 10;
+}
+
+.btn-delete-custom {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.btn-delete-custom:hover {
+    background: var(--accent-red-light);
+    color: var(--accent-red);
+}
+
+/* 
+bc18응형 */
 @media (max-width: 768px) {
-    .custom-charts-form .form-row {
-        flex-direction: column;
+    .tab-container {
+        padding: 0 1rem;
     }
     
-    .custom-charts-form .input-group {
+    .tab-btn {
+        padding: 0.75rem 1rem;
+        font-size: 0.8rem;
+    }
+    
+    .tab-btn span {
+        display: none;
+    }
+    
+    .custom-add-form .input-group {
         flex-direction: column;
     }
     
@@ -1708,11 +1908,7 @@ body {
         justify-content: center;
     }
     
-    .custom-charts-list {
-        grid-template-columns: 1fr;
-    }
-    
-    .custom-chart-container {
-        height: 250px;
+    .section-title {
+        font-size: 1rem;
     }
 }

@@ -34,9 +34,6 @@
                 <button class="btn-icon" id="refreshBtn" title="새로고침">
                     <i class="fas fa-sync-alt"></i>
                 </button>
-                <button class="btn-icon" id="settingsBtn" title="설정">
-                    <i class="fas fa-cog"></i>
-                </button>
                 <button class="btn-icon" id="themeToggle" title="다크모드 전환">
                     <i class="fas fa-moon"></i>
                 </button>
@@ -47,32 +44,102 @@
         </div>
     </header>
 
+    <!-- 탭 네비게이션 -->
+    <nav class="tab-navigation">
+        <div class="tab-container">
+            <button class="tab-btn active" data-tab="charts">
+                <i class="fas fa-chart-area"></i>
+                <span>차트</span>
+            </button>
+            <button class="tab-btn" data-tab="portfolio">
+                <i class="fas fa-wallet"></i>
+                <span>포트폴리오</span>
+            </button>
+            <button class="tab-btn" data-tab="backtest">
+                <i class="fas fa-history"></i>
+                <span>백테스팅</span>
+            </button>
+        </div>
+    </nav>
+
     <!-- 메인 컨테이너 -->
     <main class="main-container">
-        <!-- 검색 및 추가 패널 -->
-        <section class="search-section">
-            <div class="search-card">
-                <h2><i class="fas fa-search"></i> 종목 검색 및 추가</h2>
-                <div class="search-box">
-                    <input type="text" id="stockSearch" placeholder="종목명 또는 종목코드 입력 (예: 삼성전자, 005930)" maxlength="20">
-                    <button class="btn-primary" id="searchBtn">
-                        <i class="fas fa-search"></i> 검색
-                    </button>
+        <!-- 탭: 차트 -->
+        <section class="tab-content active" id="chartsTab">
+            <!-- 검색 및 추가 패널 -->
+            <section class="search-section">
+                <div class="search-card">
+                    <h2><i class="fas fa-search"></i> 종목 검색 및 추가</h2>
+                    <div class="search-box">
+                        <input type="text" id="stockSearch" placeholder="종목명 또는 종목코드 입력 (예: 삼성전자, 005930)" maxlength="20">
+                        <button class="btn-primary" id="searchBtn">
+                            <i class="fas fa-search"></i> 검색
+                        </button>
+                    </div>
+                    <div class="search-results" id="searchResults"></div>
+                    <div class="quick-add">
+                        <span class="label">인기 종목:</span>
+                        <button class="chip" data-code="005930.KS">삼성전자</button>
+                        <button class="chip" data-code="035420.KS">NAVER</button>
+                        <button class="chip" data-code="035720.KQ">카카오</button>
+                        <button class="chip" data-code="051910.KS">LG화학</button>
+                        <button class="chip" data-code="006400.KS">삼성SDI</button>
+                    </div>
                 </div>
-                <div class="search-results" id="searchResults"></div>
-                <div class="quick-add">
-                    <span class="label">인기 종목:</span>
-                    <button class="chip" data-code="005930.KS">삼성전자</button>
-                    <button class="chip" data-code="035420.KS">NAVER</button>
-                    <button class="chip" data-code="035720.KQ">카카오</button>
-                    <button class="chip" data-code="051910.KS">LG화학</button>
-                    <button class="chip" data-code="006400.KS">삼성SDI</button>
+            </section>
+
+            <!-- 메인 종목 카드 (SK하이닉스, 삼성중공업) -->
+            <section class="main-charts-section">
+                <h3 class="section-title"><i class="fas fa-star"></i> 메인 종목</h3>
+                <div class="stocks-grid" id="mainStocksGrid">
+                    <div class="loading-skeleton">
+                        <div class="skeleton-card"></div>
+                        <div class="skeleton-card"></div>
+                    </div>
                 </div>
-            </div>
+            </section>
+
+            <!-- 추가 차트 섹션 -->
+            <section class="custom-charts-section">
+                <div class="section-header">
+                    <h3 class="section-title"><i class="fas fa-plus-circle"></i> 추가 차트</h3>
+                    <p class="section-desc">관심 종목을 추가하여 모니터링하세요. 브라우저에 저장됩니다.</p>
+                </div>
+                
+                <!-- 추가 종목 입력 -->
+                <div class="custom-add-form">
+                    <div class="input-group">
+                        <input type="text" id="customTickerInput" placeholder="종목코드 입력 (예: 005930.KS, AAPL, TSLA)" maxlength="20">
+                        <button class="btn-primary" id="addCustomChartBtn">
+                            <i class="fas fa-plus"></i> 차트 추가
+                        </button>
+                    </div>
+                    <div class="quick-add-chips">
+                        <span class="label">추천:</span>
+                        <button class="chip" data-code="000660.KS">SK하이닉스</button>
+                        <button class="chip" data-code="005380.KS">현대차</button>
+                        <button class="chip" data-code="005490.KS">POSCO</button>
+                        <button class="chip" data-code="051910.KS">LG화학</button>
+                        <button class="chip" data-code="028260.KS">삼성물산</button>
+                        <button class="chip" data-code="AAPL">Apple</button>
+                        <button class="chip" data-code="TSLA">Tesla</button>
+                        <button class="chip" data-code="NVDA">NVIDIA</button>
+                        <button class="chip" data-code="MSFT">Microsoft</button>
+                    </div>
+                </div>
+
+                <!-- 추가된 종목 그리드 -->
+                <div class="stocks-grid" id="customStocksGrid">
+                    <div class="empty-state-custom" id="emptyCustomCharts">
+                        <i class="fas fa-chart-bar"></i>
+                        <p>추가된 차트가 없습니다.<br>위에서 종목을 추가해 보세요!</p>
+                    </div>
+                </div>
+            </section>
         </section>
 
-        <!-- 포트폴리오 패널 -->
-        <section class="portfolio-section" id="portfolioSection">
+        <!-- 탭: 포트폴리오 -->
+        <section class="tab-content" id="portfolioTab">
             <div class="portfolio-card">
                 <div class="portfolio-header">
                     <h3><i class="fas fa-wallet"></i> 내 포트폴리오</h3>
@@ -90,11 +157,8 @@
                             <span class="value" id="totalReturn">-</span>
                         </span>
                     </div>
-                    <button class="btn-toggle" id="togglePortfolioBtn">
-                        <i class="fas fa-chevron-down"></i>
-                    </button>
                 </div>
-                <div class="portfolio-content" id="portfolioContent">
+                <div class="portfolio-content">
                     <div class="portfolio-form">
                         <h4>종목 추가</h4>
                         <div class="form-row">
@@ -132,16 +196,13 @@
             </div>
         </section>
 
-        <!-- 백테스팅 패널 -->
-        <section class="backtest-section" id="backtestSection">
+        <!-- 탭: 백테스팅 -->
+        <section class="tab-content" id="backtestTab">
             <div class="backtest-card">
                 <div class="backtest-header">
                     <h3><i class="fas fa-history"></i> 백테스팅 - 과거 매매 신호 검증</h3>
-                    <button class="btn-toggle" id="toggleBacktestBtn">
-                        <i class="fas fa-chevron-down"></i>
-                    </button>
                 </div>
-                <div class="backtest-content" id="backtestContent">
+                <div class="backtest-content">
                     <div class="backtest-form">
                         <div class="form-group">
                             <label>종목코드</label>
@@ -184,41 +245,6 @@
             </div>
         </section>
 
-        <!-- 알림 설정 패널 -->
-        <section class="notification-section" id="notificationSection" style="display: none;">
-            <div class="notification-card">
-                <h3><i class="fas fa-bell"></i> 알림 설정</h3>
-                <div class="notification-controls">
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="notifEnabled">
-                        <span class="slider"></span>
-                        <span class="label">브라우저 알림 받기</span>
-                    </label>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="autoRefresh" checked>
-                        <span class="slider"></span>
-                        <span class="label">자동 새로고침 (60초)</span>
-                    </label>
-                </div>
-                <div class="alert-settings">
-                    <div class="alert-item">
-                        <span>RSI 과매수/과매도 알림</span>
-                        <label class="toggle-switch small">
-                            <input type="checkbox" id="rsiAlert" checked>
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                    <div class="alert-item">
-                        <span>골든/데드 크로스 알림</span>
-                        <label class="toggle-switch small">
-                            <input type="checkbox" id="crossAlert" checked>
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                </div>
-            </div>
-        </section>
-
         <!-- 마지막 업데이트 시간 -->
         <div class="update-info" id="updateInfo">
             <span><i class="fas fa-clock"></i> 마지막 업데이트: <span id="lastUpdate">-</span></span>
@@ -229,59 +255,6 @@
                 <i class="fas fa-bolt"></i> 실시간 모드
             </span>
         </div>
-
-        <!-- 종목 카드 그리드 -->
-        <section class="stocks-grid" id="stocksGrid">
-            <!-- 동적으로 생성됨 -->
-            <div class="loading-skeleton">
-                <div class="skeleton-card"></div>
-                <div class="skeleton-card"></div>
-            </div>
-        </section>
-
-        <!-- 추가 차트 관리 섹션 -->
-        <section class="custom-charts-section" id="customChartsSection">
-            <div class="custom-charts-card">
-                <div class="custom-charts-header">
-                    <h3><i class="fas fa-plus-circle"></i> 추가 차트 관리</h3>
-                    <p class="section-desc">관심 있는 종목을 추가하여 실시간 차트를 모니터링하세요</p>
-                </div>
-                
-                <!-- 추가 종목 입력 폼 -->
-                <div class="custom-charts-form">
-                    <div class="form-row">
-                        <div class="input-group">
-                            <input type="text" id="customTickerInput" placeholder="종목코드 입력 (예: 005930.KS, AAPL)" maxlength="20">
-                            <button class="btn-primary" id="addCustomChartBtn">
-                                <i class="fas fa-plus"></i> 차트 추가
-                            </button>
-                        </div>
-                    </div>
-                    <div class="quick-add-chips">
-                        <span class="label">추천 종목:</span>
-                        <button class="chip" data-code="000660.KS">SK하이닉스</button>
-                        <button class="chip" data-code="005380.KS">현대차</button>
-                        <button class="chip" data-code="035420.KS">NAVER</button>
-                        <button class="chip" data-code="035720.KQ">카카오</button>
-                        <button class="chip" data-code="006400.KS">삼성SDI</button>
-                        <button class="chip" data-code="005490.KS">POSCO홀딩스</button>
-                        <button class="chip" data-code="051910.KS">LG화학</button>
-                        <button class="chip" data-code="028260.KS">삼성물산</button>
-                        <button class="chip" data-code="AAPL">Apple</button>
-                        <button class="chip" data-code="TSLA">Tesla</button>
-                        <button class="chip" data-code="NVDA">NVIDIA</button>
-                    </div>
-                </div>
-
-                <!-- 추가된 종목 리스트 -->
-                <div class="custom-charts-list" id="customChartsList">
-                    <div class="empty-state" id="emptyCustomCharts">
-                        <i class="fas fa-chart-bar"></i>
-                        <p>추가된 차트가 없습니다.<br>위에서 종목을 추가해 보세요!</p>
-                    </div>
-                </div>
-            </div>
-        </section>
     </main>
 
     <!-- 토스트 알림 컨테이너 -->
