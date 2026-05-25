@@ -13,6 +13,7 @@ import json
 import os
 from datetime import datetime, timedelta
 from functools import lru_cache
+from typing import List
 import time
 
 app = Flask(__name__)
@@ -356,37 +357,31 @@ def get_all_stocks():
 @app.route('/api/search')
 @login_required
 def search_stocks():
-    """주식 검색 API (한국 주식)"""
+    """주식 검색 API (한국 주식) - 개선된 버전"""
     query = request.args.get('q', '').strip()
-    if not query or len(query) < 2:
-        return jsonify({'success': False, 'error': '검색어는 2글자 이상 입력해주세요.'}), 400
+    if not query or len(query) < 1:
+        return jsonify({'success': False, 'error': '검색어를 입력해주세요.'}), 400
     
-    # 한국 주식 검색 (코스피/코스닥)
-    # 실제 구현에서는 더 정교한 검색 로직 필요
+    # 개선된 한국 주식 검색
     try:
-        # Yahoo Finance ticker 직접 검색 시도
-        test_ticker = query
-        if query.isdigit() and len(query) == 6:
-            # 숫자 6자리면 한국 주식코드로 추정
-            tickers_to_try = [f"{query}.KS", f"{query}.KQ"]
-        else:
-            tickers_to_try = [query]
+        results = search_korean_stocks(query)
         
-        results = []
-        for t in tickers_to_try:
+        if not results:
+            # Yahoo Finance로 직접 시도
             try:
-                stock = yf.Ticker(t)
+                stock = yf.Ticker(query)
                 info = stock.info
-                if info and 'symbol' in info:
+                if info and info.get('symbol'):
                     results.append({
-                        'ticker': t,
-                        'name': info.get('longName', info.get('shortName', t)),
-                        'market': 'KOSPI' if t.endswith('.KS') else 'KOSDAQ' if t.endswith('.KQ') else 'Unknown'
+                        'name': info.get('longName') or info.get('shortName') or query,
+                        'ticker': query,
+                        'market': 'UNKNOWN',
+                        'exact': True
                     })
-            except Exception:
-                continue
+            except:
+                pass
         
-        return jsonify({'success': True, 'results': results})
+        return jsonify({'success': True, 'results': results, 'count': len(results)})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -465,9 +460,117 @@ def market_status():
 
 
 # ========================================
-# 포트폴리오 API (Portfolio)
+# 포트폴리오 API (Portfolio) - SQLite 버전
 # ========================================
-from portfolio import portfolio_manager
+from portfolio_db import portfolio_manager
+
+# ========================================
+# 주식 검색 데이터베이스 (이름으로 검색 가능)
+# ========================================
+KOREAN_STOCKS = {
+    # 코스피 대형주
+    '삼성전자': '005930.KS', 'SK하이닉스': '000660.KS', '현대차': '005380.KS',
+    '삼성전자우': '005935.KS', '기아': '000270.KS', 'LG에너지솔루션': '373220.KS',
+    '현대모비스': '012330.KS', '삼성SDI': '006400.KS', 'NAVER': '035420.KS',
+    '카카오': '035720.KS', 'LG화학': '051910.KS', '삼성바이오로직스': '207940.KS',
+    'POSCO홀딩스': '005490.KS', 'KB금융': '105560.KS', '현대중공업': '009540.KS',
+    '신한지주': '055550.KS', '삼성생명': '032830.KS', '하나금융지주': '086790.KS',
+    '하이브': '352820.KS', 'LG전자': '066570.KS', '삼성중공업': '010140.KS',
+    '한국전력': '015760.KS', '삼성물산': '028260.KS', '기업은행': '024110.KS',
+    'KT&G': '033780.KS', '현대건설': '000720.KS', '대우조선해양': '042660.KS',
+    'CJ대한통운': '000120.KS', '오뚜기': '007310.KS', '농심': '004370.KS',
+    '한화에어로스페이스': '012450.KS', '롯데케미칼': '011170.KS', 'S-Oil': '010950.KS',
+    'GS리테일': '007070.KS', '이마트': '139480.KS', '신세계': '004170.KS',
+    '현대백화점': '069960.KS', '강원랜드': '035250.KS', '코웨이': '021240.KS',
+    '삼성엔지니어링': '028050.KS', '대림건설': '000210.KS', 'DL이앤씨': '375500.KS',
+    'HMM': '011200.KS', '대한항공': '003490.KS', '아시아나항공': '020560.KS',
+    '제주항공': '089590.KS', '에어프레미아': '089300.KS', 'LX인터내셔널': '001120.KS',
+    'LX하우시스': '108670.KS', 'LG유플러스': '032640.KS', 'SK텔레콤': '017670.KS',
+    'KT': '030200.KS', 'CJ': '001040.KS', 'CJENM': '035760.KS',
+    'CJ제일제당': '097950.KS', '오리온': '271560.KS', '롯데지주': '004990.KS',
+    '두산에너빌리티': '034020.KS', '두산밥캣': '241560.KS', '효성': '004800.KS',
+    '효성첨단소재': '298050.KS', 'SK': '034730.KS', 'GS': '078930.KS',
+    '한화': '000880.KS', '금호석유': '011780.KS', '코오롱인더': '120110.KS',
+    '넥센타이어': '002350.KS', '한국타이어': '161390.KS', 'LG디스플레이': '034220.KS',
+    '삼성디스플레이': 'undefined.KS', 'DBX': '078860.KS', '에스엘': '005850.KS',
+    '만도': '204320.KS', '현대위아': '011210.KS', '현대제철': '004020.KS',
+    '동국제강': '001230.KS', '현대미포조선': '010620.KS', '삼성重': '010140.KS',
+    '한화오션': '042660.KS', '대우조선': '042660.KS', '포스코인터내셔널': '047050.KS',
+    '현대글로비스': '001250.KS', '쿠팡': 'CPNG', '우한': 'undefined',
+    # KOSDAQ
+    '카카오게임즈': '293490.KQ', '엔씨소프트': '036570.KQ', '네오위즈': '095660.KQ',
+    '넷마블': '251270.KQ', '위메이드': '112040.KQ', 'NHN': '181710.KQ',
+    '컴투스': '078340.KQ', '펄어비스': '263750.KQ', '더블유게임즈': '192080.KQ',
+    '위메이드맥스': '101730.KQ', '한빛소프트': '047080.KQ', '게임빌': '063080.KQ',
+    '스마일게이트': 'undefined', '카카오페이': '377300.KQ', '토스': 'undefined',
+    '네이버페이': 'undefined', '배달의민족': 'undefined', '쏘카': 'undefined',
+    '야놀자': 'undefined', '직방': 'undefined', '두나무': 'undefined',
+    '빗썸': 'undefined', '코인원': 'undefined', '코빗': 'undefined',
+    '셀트리온헬스케어': '091990.KQ', '셀트리온제약': '068760.KQ', '알테오젠': '196170.KQ',
+    '바이오노트': '376090.KQ', '레고켐바이오': '141080.KQ', '신풍제약': '019170.KQ',
+    '종근당': '185750.KQ', '종근당바이오': '001630.KQ', '한미약품': '128940.KQ',
+    '일동제약': '249420.KQ', '유한양행': '000100.KS', '대웅제약': '069620.KQ',
+    '녹십자': '006280.KS', '메디톡스': '086900.KQ', '휴젤': '145020.KQ',
+    '에이스토리': '241840.KQ', '스튜디오드래곤': '253450.KQ', '씨제이': '000120.KS',
+    'JYP': '035900.KQ', 'SM': '041510.KQ', 'YG': '122870.KQ',
+    '하이브': '352820.KQ', '스타쉽': 'undefined', '큐브': '182360.KQ',
+    'FNC': '173940.KQ', ' 팬엔터': 'undefined', '클라씨': 'undefined',
+    '에스파': 'undefined', '뉴진스': 'undefined', '블랙핑크': 'undefined',
+    '아이브': 'undefined', '세븐틴': 'undefined', 'BTS': 'undefined',
+    '방탄소년단': 'undefined', '엑소': 'undefined', '엔시티': 'undefined',
+    '에스엠': '041510.KQ', '와이지': '122870.KQ', '제와이피': '035900.KQ',
+    '펄어비스': '263750.KQ', '스타일리스트': '336060.KQ', '애드테크': 'undefined',
+    '크래프톤': '259960.KQ', '스마일게이트': 'undefined', '넥슨': 'undefined',
+    '한게임': '174790.KQ', '게임빌': '063080.KQ', '컴투스홀딩스': '063080.KQ'
+}
+
+def search_korean_stocks(query: str) -> List[Dict]:
+    """주식 이름으로 검색"""
+    query = query.lower().strip()
+    results = []
+    
+    # 정확한 매칭 먼저
+    for name, ticker in KOREAN_STOCKS.items():
+        if query in name.lower():
+            results.append({
+                'name': name,
+                'ticker': ticker,
+                'market': 'KOSPI' if '.KS' in ticker else 'KOSDAQ' if '.KQ' in ticker else 'ETC',
+                'exact': query == name.lower()
+            })
+    
+    # 정확한 매칭 우선 정렬
+    results.sort(key=lambda x: (not x['exact'], x['name']))
+    
+    # Yahoo Finance에서 추가 검증 (선택사항)
+    if len(results) < 5:
+        try:
+            # 티커로 직접 검색 시도
+            if query.isdigit():
+                if len(query) == 6:
+                    # 6자리 숫자는 한국 주식 코드
+                    tickers = [f"{query}.KS", f"{query}.KQ"]
+                else:
+                    tickers = [query]
+                
+                for t in tickers:
+                    try:
+                        stock = yf.Ticker(t)
+                        info = stock.info
+                        if info and info.get('symbol'):
+                            name = info.get('longName') or info.get('shortName') or t
+                            results.append({
+                                'name': name,
+                                'ticker': t,
+                                'market': 'KOSPI' if t.endswith('.KS') else 'KOSDAQ' if t.endswith('.KQ') else 'OTHER',
+                                'exact': False
+                            })
+                    except:
+                        pass
+        except:
+            pass
+    
+    return results[:10]  # 최대 10개 결과
 
 @app.route('/api/portfolio', methods=['GET', 'POST'])
 @login_required
