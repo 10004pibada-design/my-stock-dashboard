@@ -1,5 +1,5 @@
 // ========================================
-// Stock Dashboard - Main Application
+// Stock Dashboard - Main Application (DEBUG VERSION)
 // ========================================
 
 const AppState = {
@@ -80,23 +80,30 @@ const API = {
     
     async request(url, options = {}) {
         const fullUrl = url.startsWith('http') ? url : `${this.baseUrl}${url}`;
+        
+        log('API Request:', fullUrl);
+        
         const defaults = {
             headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json'
-            }
+            },
+            credentials: 'same-origin'  // Important: include cookies for session
         };
         
         try {
-            log('API Request:', fullUrl);
             const response = await fetch(fullUrl, { ...defaults, ...options });
             
+            log('API Response status:', response.status, response.statusText);
+            
             if (!response.ok) {
+                const errorText = await response.text();
+                error('API Error response:', errorText);
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
             
             const data = await response.json();
-            log('API Response:', fullUrl, data.success ? 'success' : 'failed');
+            log('API Response data:', data.success ? 'success' : 'failed');
             return data;
         } catch (err) {
             error('API Error:', fullUrl, err.message);
@@ -104,10 +111,23 @@ const API = {
         }
     },
     
-    get(url) { return this.request(url); },
-    post(url, data) { return this.request(url, { method: 'POST', body: JSON.stringify(data) }); },
-    put(url, data) { return this.request(url, { method: 'PUT', body: JSON.stringify(data) }); },
-    delete(url) { return this.request(url, { method: 'DELETE' }); },
+    get(url) { 
+        log('API GET:', url);
+        return this.request(url, { method: 'GET' }); 
+    },
+    
+    post(url, data) { 
+        log('API POST:', url, data);
+        return this.request(url, { method: 'POST', body: JSON.stringify(data) }); 
+    },
+    
+    put(url, data) { 
+        return this.request(url, { method: 'PUT', body: JSON.stringify(data) }); 
+    },
+    
+    delete(url) { 
+        return this.request(url, { method: 'DELETE' }); 
+    },
     
     async getStockData(ticker) {
         if (!ticker) return null;
@@ -142,6 +162,7 @@ const Notification = {
     init() {
         this.container = document.getElementById('toastContainer');
         if (!this.container) {
+            log('Creating toast container');
             this.container = document.createElement('div');
             this.container.id = 'toastContainer';
             this.container.className = 'toast-container';
@@ -188,6 +209,8 @@ const Notification = {
 
 const ChartRenderer = {
     render(chartId, data, name) {
+        log('Rendering chart:', chartId, 'data exists:', !!data);
+        
         const container = document.getElementById(chartId);
         if (!container) {
             error('Chart container not found:', chartId);
@@ -195,7 +218,7 @@ const ChartRenderer = {
         }
         
         if (!data || !data.ohlc || data.ohlc.length === 0) {
-            error('No data for chart:', chartId);
+            error('No data for chart:', chartId, 'data:', data);
             container.innerHTML = '<div class="chart-error">데이터 없음</div>';
             return;
         }
@@ -224,6 +247,8 @@ const ChartRenderer = {
             const dates = data.ohlc.map(d => d[0]);
             const prices = data.ohlc.map(d => d.slice(1));
             const volumes = data.volume || [];
+            
+            log('Chart data points:', dates.length);
             
             const option = {
                 animation: true,
@@ -320,7 +345,7 @@ const ChartRenderer = {
                 chart.resize();
             });
             
-            log('Chart rendered:', chartId);
+            log('Chart rendered successfully:', chartId);
         } catch (err) {
             error('Chart render error:', err);
             container.innerHTML = '<div class="chart-error">차트 렌더링 오류</div>';
@@ -335,7 +360,6 @@ const ChartRenderer = {
                 delete AppState.charts[key];
             }
         });
-        // Re-render will happen on next data load
     }
 };
 
@@ -345,6 +369,8 @@ const ChartRenderer = {
 
 const StockCard = {
     create(cardId, chartId, data, ticker, removable = false) {
+        log('Creating stock card:', cardId, 'for', ticker);
+        
         const signalClass = data.signal_class || 'neutral';
         const changeClass = (data.change_pct || 0) >= 0 ? 'positive' : 'negative';
         const changeIcon = (data.change_pct || 0) >= 0 ? 'fa-arrow-up' : 'fa-arrow-down';
@@ -827,6 +853,8 @@ const CustomChartsManager = {
     },
     
     async addStock(ticker) {
+        log('Adding stock:', ticker);
+        
         try {
             Notification.toast('정보', '데이터 로딩중...', 'info');
             
@@ -1024,6 +1052,8 @@ const App = {
     },
     
     async loadStocks() {
+        log('Loading stocks...');
+        
         const grid = document.getElementById('mainStocksGrid');
         if (!grid) {
             error('Main stocks grid not found');
@@ -1039,9 +1069,12 @@ const App = {
         `;
         
         try {
+            log('Calling API.get for /api/stocks');
             const result = await API.get('/api/stocks');
+            log('API response received:', result);
             
             if (result.success && result.data) {
+                log('Rendering stocks, count:', Object.keys(result.data).length);
                 this.renderStocks(result.data);
                 this.updateLastUpdateTime();
             } else {
@@ -1050,22 +1083,36 @@ const App = {
             }
         } catch (err) {
             error('Failed to load stocks:', err);
-            grid.innerHTML = '<div class="error-state">서버 연결 실패</div>';
+            grid.innerHTML = `
+                <div class="error-state">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p>서버 연결 실패</p>
+                    <small>${err.message}</small>
+                </div>
+            `;
+            Notification.toast('오류', `데이터 로딩 실패: ${err.message}`, 'error');
         }
     },
     
     renderStocks(stocksData) {
         const grid = document.getElementById('mainStocksGrid');
-        if (!grid) return;
+        if (!grid) {
+            error('mainStocksGrid not found');
+            return;
+        }
         
         grid.innerHTML = '';
         
         if (!stocksData || Object.keys(stocksData).length === 0) {
+            error('No stocks data received');
             grid.innerHTML = '<div class="empty-state">표시할 종목이 없습니다.</div>';
             return;
         }
         
+        log('Rendering', Object.keys(stocksData).length, 'stocks');
+        
         Object.entries(stocksData).forEach(([ticker, data]) => {
+            log('Rendering stock:', ticker, data.name);
             const safeTicker = ticker.replace(/\./g, '_');
             const cardId = `card-${safeTicker}`;
             const chartId = `chart-${safeTicker}`;
@@ -1140,6 +1187,8 @@ const App = {
 // Part 13: Initialization
 // ========================================
 
+log('app.js loaded, waiting for DOMContentLoaded');
+
 document.addEventListener('DOMContentLoaded', () => {
     log('DOM Content Loaded - Starting initialization');
     
@@ -1186,3 +1235,5 @@ window.addEventListener('beforeunload', () => {
 window.SearchManager = SearchManager;
 window.PortfolioManager = PortfolioManager;
 window.CustomChartsManager = CustomChartsManager;
+
+log('app.js execution completed');
