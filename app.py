@@ -17,8 +17,8 @@ from typing import List, Dict
 import time
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
-CORS(app)
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-89780186')
+CORS(app, supports_credentials=True, origins="*")
 
 # 비밀번호 설정
 ACCESS_PASSWORD = "89780186"
@@ -52,6 +52,22 @@ def logout():
     """로그아웃"""
     session.pop('authenticated', None)
     return redirect(url_for('login'))
+
+
+@app.route('/test')
+@login_required
+def test_page():
+    """테스트 페이지"""
+    return render_template('test.html')
+
+
+@app.route('/api/debug/session')
+def debug_session():
+    """세션 디버깅 API"""
+    return jsonify({
+        'authenticated': session.get('authenticated', False),
+        'session_keys': list(session.keys())
+    })
 
 
 def clean_nan_values(obj):
