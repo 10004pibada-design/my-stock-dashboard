@@ -382,16 +382,17 @@ const ChartRenderer = {
         params.forEach(item => {
             if (item.seriesName === '캔들차트') {
                 const candleData = item.data;
+                // kline format: [open, close, low, high] = indices [0, 1, 2, 3]
                 result += `
                     <div style="margin: 4px 0;">
                         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;margin-right:5px;"></span>
-                        <strong>시가:</strong> ${Utils.formatNumber(Math.round(candleData[1]))}원<br/>
+                        <strong>시가:</strong> ${Utils.formatNumber(Math.round(candleData[0]))}원<br/>
                         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#ef4444;margin-right:5px;"></span>
-                        <strong>종가:</strong> ${Utils.formatNumber(Math.round(candleData[2]))}원<br/>
+                        <strong>종가:</strong> ${Utils.formatNumber(Math.round(candleData[1]))}원<br/>
                         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3b82f6;margin-right:5px;"></span>
-                        <strong>저가:</strong> ${Utils.formatNumber(Math.round(candleData[3]))}원<br/>
+                        <strong>저가:</strong> ${Utils.formatNumber(Math.round(candleData[2]))}원<br/>
                         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#10b981;margin-right:5px;"></span>
-                        <strong>고가:</strong> ${Utils.formatNumber(Math.round(candleData[4]))}원
+                        <strong>고가:</strong> ${Utils.formatNumber(Math.round(candleData[3]))}원
                     </div>
                 `;
             } else if (item.seriesName === '거래량') {

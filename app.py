@@ -130,44 +130,67 @@ def convert_to_native(obj):
 
 def calculate_rsi(prices, period=14):
     """RSI (Relative Strength Index) 계산"""
+    if len(prices) < period + 1:
+        # 데이터가 부족하면 None으로 채운 리스트 반환
+        return [None] * len(prices)
+
     deltas = np.diff(prices)
     gains = np.where(deltas > 0, deltas, 0)
     losses = np.where(deltas < 0, -deltas, 0)
-    
+
     avg_gains = np.convolve(gains, np.ones(period)/period, mode='valid')
     avg_losses = np.convolve(losses, np.ones(period)/period, mode='valid')
-    
+
     rs = avg_gains / (avg_losses + 1e-10)
     rsi = 100 - (100 / (1 + rs))
-    return rsi.tolist()
+
+    # RSI 결과를 원본 데이터 길이에 맞춤 (앞부분은 None으로 패딩)
+    rsi_list = [None] * period + rsi.tolist()
+    return rsi_list
 
 
 def calculate_macd(prices, fast=12, slow=26, signal=9):
     """MACD (Moving Average Convergence Divergence) 계산"""
+    if len(prices) < slow:
+        # 데이터가 부족하면 None으로 채운 리스트 반환
+        return {
+            'macd': [None] * len(prices),
+            'signal': [None] * len(prices),
+            'histogram': [None] * len(prices)
+        }
+
     ema_fast = pd.Series(prices).ewm(span=fast, adjust=False).mean()
     ema_slow = pd.Series(prices).ewm(span=slow, adjust=False).mean()
     macd_line = ema_fast - ema_slow
     signal_line = macd_line.ewm(span=signal, adjust=False).mean()
     histogram = macd_line - signal_line
-    
+
     return {
-        'macd': macd_line.tolist(),
-        'signal': signal_line.tolist(),
-        'histogram': histogram.tolist()
+        'macd': convert_to_native(macd_line.tolist()),
+        'signal': convert_to_native(signal_line.tolist()),
+        'histogram': convert_to_native(histogram.tolist())
     }
 
 
 def calculate_bollinger_bands(prices, period=20, std_dev=2):
     """볼린저 밴드 계산"""
+    if len(prices) < period:
+        # 데이터가 부족하면 None으로 채운 리스트 반환
+        return {
+            'upper': [None] * len(prices),
+            'middle': [None] * len(prices),
+            'lower': [None] * len(prices)
+        }
+
     sma = pd.Series(prices).rolling(window=period).mean()
     std = pd.Series(prices).rolling(window=period).std()
     upper = sma + (std * std_dev)
     lower = sma - (std * std_dev)
-    
+
     return {
-        'upper': upper.tolist(),
-        'middle': sma.tolist(),
-        'lower': lower.tolist()
+        'upper': convert_to_native(upper.tolist()),
+        'middle': convert_to_native(sma.tolist()),
+        'lower': convert_to_native(lower.tolist())
     }
 
 
@@ -208,16 +231,17 @@ def analyze_signal(latest_close, ma20, ma60, rsi=None):
     # RSI 기반 분석
     if rsi is not None and len(rsi) > 0:
         latest_rsi = rsi[-1]
-        if latest_rsi > 70:
-            reasons.append(f"RSI 과매수 구간 ({latest_rsi:.1f})")
-            if signal_type in ["hold", "buy"]:
-                signal = "⚠️ 과매수 주의"
-                signal_class = "caution"
-        elif latest_rsi < 30:
-            reasons.append(f"RSI 과매도 구간 ({latest_rsi:.1f})")
-            if signal_type in ["sell", "caution"]:
-                signal = "💡 과매도 반등 가능"
-                signal_class = "buy"
+        if latest_rsi is not None and not np.isnan(latest_rsi):
+            if latest_rsi > 70:
+                reasons.append(f"RSI 과매수 구간 ({latest_rsi:.1f})")
+                if signal_type in ["hold", "buy"]:
+                    signal = "⚠️ 과매수 주의"
+                    signal_class = "caution"
+            elif latest_rsi < 30:
+                reasons.append(f"RSI 과매도 구간 ({latest_rsi:.1f})")
+                if signal_type in ["sell", "caution"]:
+                    signal = "💡 과매도 반등 가능"
+                    signal_class = "buy"
     
     reason_text = f"주가({latest_close:,.0f}원). " + " | ".join(reasons)
     
@@ -241,36 +265,42 @@ def fetch_stock_data(ticker, period='1y'):
         # 기본 이동평균선
         df['MA20'] = df['Close'].rolling(window=20).mean()
         df['MA60'] = df['Close'].rolling(window=60).mean()
-        
-        # RSI 계산
-        rsi_values = calculate_rsi(df['Close'].values.flatten())
-        
-        # MACD 계산
-        macd_data = calculate_macd(df['Close'].values.flatten())
-        
-        # 볼린저 밴드
-        bb_data = calculate_bollinger_bands(df['Close'].values.flatten())
-        
-        # NaN 제거
-        df = df.dropna()
-        
+
+        # NaN 제거 - MA20이 있는 행부터 사용 (초기 20일은 MA20 없음)
+        df_clean = df.dropna(subset=['MA20'])
+
+        # 데이터가 충분한지 확인
+        if df_clean.empty:
+            print(f"Error: {ticker} - Insufficient data after cleaning")
+            return None
+
         # 데이터 추출
-        closes = df['Close'].values.flatten()
-        opens = df['Open'].values.flatten()
-        lows = df['Low'].values.flatten()
-        highs = df['High'].values.flatten()
-        volumes = df['Volume'].values.flatten()
-        ma20_values = df['MA20'].values.flatten()
-        ma60_values = df['MA60'].values.flatten()
+        closes = df_clean['Close'].values.flatten()
+        opens = df_clean['Open'].values.flatten()
+        lows = df_clean['Low'].values.flatten()
+        highs = df_clean['High'].values.flatten()
+        volumes = df_clean['Volume'].values.flatten()
+        ma20_values = df_clean['MA20'].values.flatten()
+        ma60_values = df_clean['MA60'].values.flatten()
+
+        # 기술적 지표 계산 (cleaned 데이터 기준)
+        rsi_values = calculate_rsi(closes)
+        macd_data = calculate_macd(closes)
+        bb_data = calculate_bollinger_bands(closes)
+        
+        # 데이터 길이 확인
+        if len(closes) == 0:
+            print(f"Error: {ticker} - No price data available")
+            return None
         
         # 최신 값
         latest_price = float(closes[-1])
-        latest_vol = int(volumes[-1])
-        latest_ma20 = float(ma20_values[-1])
-        latest_ma60 = float(ma60_values[-1])
+        latest_vol = int(volumes[-1]) if len(volumes) > 0 else 0
+        latest_ma20 = float(ma20_values[-1]) if len(ma20_values) > 0 and not np.isnan(ma20_values[-1]) else latest_price
+        latest_ma60 = float(ma60_values[-1]) if len(ma60_values) > 0 and not np.isnan(ma60_values[-1]) else latest_price
         
-        # RSI (데이터 길이 맞춤)
-        rsi_for_analysis = rsi_values[-len(closes):] if len(rsi_values) >= len(closes) else rsi_values
+        # RSI는 이미 cleaned 데이터 길이와 동일하게 계산됨
+        rsi_for_analysis = rsi_values
         
         # 시그널 분석
         signal_text, signal_class, signal_reason, reasons = analyze_signal(
@@ -285,8 +315,8 @@ def fetch_stock_data(ticker, period='1y'):
         
         result = {
             'ticker': ticker,
-            'dates': df.index.strftime('%Y-%m-%d').tolist(),
-            'kline': [[float(o), float(c), float(l), float(h)] 
+            'dates': df_clean.index.strftime('%Y-%m-%d').tolist(),
+            'kline': [[float(o), float(c), float(l), float(h)]
                      for o, c, l, h in zip(opens, closes, lows, highs)],
             'volumes': convert_to_native(volumes),
             'ma20': convert_to_native(ma20_values),
