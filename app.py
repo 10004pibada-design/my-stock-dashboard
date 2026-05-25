@@ -464,5 +464,94 @@ def market_status():
     })
 
 
+# ========================================
+# 포트폴리오 API (Portfolio)
+# ========================================
+from portfolio import portfolio_manager
+
+@app.route('/api/portfolio', methods=['GET', 'POST'])
+@login_required
+def portfolio_api():
+    """포트폴리오 API"""
+    if request.method == 'GET':
+        # 포트폴리오 데이터 반환
+        returns = portfolio_manager.calculate_returns()
+        return jsonify({
+            'success': True,
+            'data': returns
+        })
+    
+    elif request.method == 'POST':
+        # 새 보유 종목 추가
+        data = request.get_json()
+        ticker = data.get('ticker', '').strip()
+        name = data.get('name', '').strip()
+        shares = data.get('shares', 0)
+        avg_price = data.get('avg_price', 0)
+        purchase_date = data.get('purchase_date')
+        
+        if not ticker or not name or shares <= 0 or avg_price <= 0:
+            return jsonify({'success': False, 'error': '모든 필드를 올바르게 입력해주세요.'}), 400
+        
+        # 티커 형식 보정
+        if ticker.isdigit() and len(ticker) == 6:
+            ticker = f"{ticker}.KS"
+        
+        holding = portfolio_manager.add_holding(ticker, name, shares, avg_price, purchase_date)
+        return jsonify({
+            'success': True,
+            'message': f'{name}({ticker})가 추가되었습니다.',
+            'holding': holding
+        })
+
+
+@app.route('/api/portfolio/<holding_id>', methods=['DELETE', 'PUT'])
+@login_required
+def portfolio_holding_api(holding_id):
+    """개별 보유 종목 관리 API"""
+    if request.method == 'DELETE':
+        # 보유 종목 삭제
+        success = portfolio_manager.remove_holding(holding_id)
+        if success:
+            return jsonify({'success': True, 'message': '종목이 삭제되었습니다.'})
+        return jsonify({'success': False, 'error': '해당 종목을 찾을 수 없습니다.'}), 404
+    
+    elif request.method == 'PUT':
+        # 보유 종목 수정
+        data = request.get_json()
+        field = data.get('field')  # 'shares' 또는 'avg_price'
+        value = data.get('value')
+        
+        if field == 'shares':
+            result = portfolio_manager.update_shares(holding_id, float(value))
+        elif field == 'avg_price':
+            result = portfolio_manager.update_avg_price(holding_id, float(value))
+        else:
+            return jsonify({'success': False, 'error': '잘못된 필드입니다.'}), 400
+        
+        if result:
+            return jsonify({'success': True, 'message': '수정되었습니다.', 'holding': result})
+        return jsonify({'success': False, 'error': '해당 종목을 찾을 수 없습니다.'}), 404
+
+
+# ========================================
+# 백테스팅 API (Backtest)
+# ========================================
+from backtest import run_backtest
+
+@app.route('/api/backtest/<ticker>')
+@login_required
+def backtest_api(ticker):
+    """백테스팅 API"""
+    period = request.args.get('period', '1y')
+    
+    # 티커 형식 보정
+    if ticker.isdigit() and len(ticker) == 6:
+        ticker = f"{ticker}.KS"
+    
+    result = run_backtest(ticker, period)
+    return jsonify(result)
+
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
