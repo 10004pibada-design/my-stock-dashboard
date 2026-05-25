@@ -11,17 +11,71 @@ import pandas as pd
 import numpy as np
 import json
 import os
-from datetime import datetime, timedelta
-from functools import lru_cache
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 import time
+import hmac
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from core_utils import (
+    clean_nan_values,
+    normalize_ticker,
+    is_valid_ticker,
+    is_korean_market_ticker,
+    convert_to_native,
+    calculate_rsi,
+    calculate_macd,
+    calculate_bollinger_bands,
+    analyze_signal,
+)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-89780186')
-CORS(app, supports_credentials=True, origins="*")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=os.environ.get('FLASK_ENV') == 'production',
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+)
+CORS(app, supports_credentials=True)
 
 # 비밀번호 설정
-ACCESS_PASSWORD = "89780186"
+ACCESS_PASSWORD = os.environ.get('ACCESS_PASSWORD', '89780186')
+VALID_PERIODS = {'5d', '1mo', '3mo', '6mo', '1y', '2y', '3y', '5y', 'max'}
+MAX_CACHE_ENTRIES = 200
+MAX_LOGIN_ATTEMPTS = 5
+LOGIN_WINDOW_SECONDS = 300
+LOCKOUT_SECONDS = 300
+MAX_SEARCH_RESULTS = 50
+
+
+def get_client_ip() -> str:
+    """클라이언트 IP 추출"""
+    forwarded = request.headers.get('X-Forwarded-For', '')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return request.remote_addr or 'unknown'
+
+
+def _prune_old_attempts(ip: str, now_ts: float):
+    attempts = _login_attempts.get(ip, [])
+    attempts = [ts for ts in attempts if now_ts - ts <= LOGIN_WINDOW_SECONDS]
+    _login_attempts[ip] = attempts
+    return attempts
+
+
+def parse_positive_float(value, field_name: str):
+    """양수 숫자 필드 파싱/검증"""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f'{field_name}는 숫자여야 합니다.')
+
+    if number <= 0:
+        raise ValueError(f'{field_name}는 0보다 커야 합니다.')
+
+    return number
 
 
 def login_required(f):
@@ -37,12 +91,28 @@ def login_required(f):
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     """로그인 페이지"""
+    client_ip = get_client_ip()
+    now_ts = time.time()
+    attempts = _prune_old_attempts(client_ip, now_ts)
+
     if request.method == 'POST':
+        if len(attempts) >= MAX_LOGIN_ATTEMPTS:
+            retry_after = int(LOCKOUT_SECONDS - (now_ts - attempts[0]))
+            if retry_after > 0:
+                return render_template(
+                    'login.html',
+                    error=f'로그인 시도 횟수를 초과했습니다. {retry_after}초 후 다시 시도해주세요.'
+                )
+
         password = request.form.get('password', '')
-        if password == ACCESS_PASSWORD:
+        if hmac.compare_digest(password, ACCESS_PASSWORD):
+            _login_attempts.pop(client_ip, None)
+            session.clear()
+            session.permanent = True
             session['authenticated'] = True
             return redirect(url_for('index'))
         else:
+            _login_attempts[client_ip].append(now_ts)
             return render_template('login.html', error='비밀번호가 올바르지 않습니다.')
     return render_template('login.html')
 
@@ -64,23 +134,20 @@ def test_page():
 @app.route('/api/debug/session')
 def debug_session():
     """세션 디버깅 API"""
+    if os.environ.get('FLASK_ENV') == 'production':
+        return jsonify({'success': False, 'error': 'Not available in production'}), 403
+
     return jsonify({
         'authenticated': session.get('authenticated', False),
         'session_keys': list(session.keys())
     })
 
 
-def clean_nan_values(obj):
-    """재귀적으로 NaN/Infinity 값을 None으로 변환"""
-    if isinstance(obj, float):
-        if np.isnan(obj) or np.isinf(obj):
-            return None
-        return obj
-    elif isinstance(obj, list):
-        return [clean_nan_values(item) for item in obj]
-    elif isinstance(obj, dict):
-        return {k: clean_nan_values(v) for k, v in obj.items()}
-    return obj
+@app.route('/api/health')
+def health_check():
+    """헬스체크 API"""
+    return jsonify({'success': True, 'status': 'ok', 'timestamp': datetime.now(timezone.utc).isoformat()})
+
 
 # 설정
 TICKERS_FILE = 'user_tickers.json'
@@ -95,19 +162,32 @@ DEFAULT_TICKERS = {
 # 메모리 캐시
 _cache = {}
 _cache_time = {}
+_login_attempts = defaultdict(list)
 
 
 def get_cache(key):
     """캐시된 데이터 확인"""
-    if key in _cache and time.time() - _cache_time.get(key, 0) < CACHE_DURATION:
-        return _cache[key]
-    return None
+    if key not in _cache:
+        return None
+
+    if time.time() - _cache_time.get(key, 0) >= CACHE_DURATION:
+        _cache.pop(key, None)
+        _cache_time.pop(key, None)
+        return None
+
+    return _cache[key]
 
 
 def set_cache(key, data):
     """데이터 캐시 저장"""
     _cache[key] = data
     _cache_time[key] = time.time()
+
+    # 캐시 용량 제한: 오래된 항목부터 제거
+    if len(_cache) > MAX_CACHE_ENTRIES:
+        oldest_key = min(_cache_time, key=_cache_time.get)
+        _cache.pop(oldest_key, None)
+        _cache_time.pop(oldest_key, None)
 
 
 def load_user_tickers():
@@ -127,152 +207,15 @@ def save_user_tickers(tickers):
         json.dump(tickers, f, ensure_ascii=False, indent=2)
 
 
-def convert_to_native(obj):
-    """NumPy/Pandas 객체를 Python 네이티브 타입으로 변환"""
-    if isinstance(obj, (np.integer, np.int64, np.int32)):
-        return int(obj)
-    elif isinstance(obj, (np.floating, np.float64, np.float32)):
-        return float(obj)
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, pd.Series):
-        return obj.tolist()
-    elif isinstance(obj, list):
-        return [convert_to_native(item) for item in obj]
-    elif isinstance(obj, dict):
-        return {k: convert_to_native(v) for k, v in obj.items()}
-    return obj
-
-
-def calculate_rsi(prices, period=14):
-    """RSI (Relative Strength Index) 계산"""
-    if len(prices) < period + 1:
-        # 데이터가 부족하면 None으로 채운 리스트 반환
-        return [None] * len(prices)
-
-    deltas = np.diff(prices)
-    gains = np.where(deltas > 0, deltas, 0)
-    losses = np.where(deltas < 0, -deltas, 0)
-
-    avg_gains = np.convolve(gains, np.ones(period)/period, mode='valid')
-    avg_losses = np.convolve(losses, np.ones(period)/period, mode='valid')
-
-    rs = avg_gains / (avg_losses + 1e-10)
-    rsi = 100 - (100 / (1 + rs))
-
-    # RSI 결과를 원본 데이터 길이에 맞춤 (앞부분은 None으로 패딩)
-    rsi_list = [None] * period + rsi.tolist()
-    return rsi_list
-
-
-def calculate_macd(prices, fast=12, slow=26, signal=9):
-    """MACD (Moving Average Convergence Divergence) 계산"""
-    if len(prices) < slow:
-        # 데이터가 부족하면 None으로 채운 리스트 반환
-        return {
-            'macd': [None] * len(prices),
-            'signal': [None] * len(prices),
-            'histogram': [None] * len(prices)
-        }
-
-    ema_fast = pd.Series(prices).ewm(span=fast, adjust=False).mean()
-    ema_slow = pd.Series(prices).ewm(span=slow, adjust=False).mean()
-    macd_line = ema_fast - ema_slow
-    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    histogram = macd_line - signal_line
-
-    return {
-        'macd': convert_to_native(macd_line.tolist()),
-        'signal': convert_to_native(signal_line.tolist()),
-        'histogram': convert_to_native(histogram.tolist())
-    }
-
-
-def calculate_bollinger_bands(prices, period=20, std_dev=2):
-    """볼린저 밴드 계산"""
-    if len(prices) < period:
-        # 데이터가 부족하면 None으로 채운 리스트 반환
-        return {
-            'upper': [None] * len(prices),
-            'middle': [None] * len(prices),
-            'lower': [None] * len(prices)
-        }
-
-    sma = pd.Series(prices).rolling(window=period).mean()
-    std = pd.Series(prices).rolling(window=period).std()
-    upper = sma + (std * std_dev)
-    lower = sma - (std * std_dev)
-
-    return {
-        'upper': convert_to_native(upper.tolist()),
-        'middle': convert_to_native(sma.tolist()),
-        'lower': convert_to_native(lower.tolist())
-    }
-
-
-def analyze_signal(latest_close, ma20, ma60, rsi=None):
-    """종합 매매 시그널 분석"""
-    if pd.isna(ma20) or pd.isna(ma60):
-        return "데이터 부족", "hold", "추세 데이터가 부족합니다.", []
-    
-    reasons = []
-    
-    # 이동평균선 분석
-    if latest_close > ma20 and ma20 > ma60:
-        signal = "🔥 강력 보유 (HOLD)"
-        signal_class = "hold"
-        signal_type = "hold"
-        reasons.append("완벽한 정배열 강세장")
-    elif latest_close < ma20 and ma20 < ma60:
-        signal = "❄️ 비중 축소 (SELL)"
-        signal_class = "sell"
-        signal_type = "sell"
-        reasons.append("역배열 하락 추세")
-    elif latest_close > ma20 and ma20 < ma60:
-        signal = "💡 단기 반등 (WATCH)"
-        signal_class = "buy"
-        signal_type = "buy"
-        reasons.append("장기 추세 하락 중 단기 회복")
-    elif latest_close < ma20 and ma20 > ma60:
-        signal = "⚠️ 단기 이탈 주의 (CAUTION)"
-        signal_class = "sell"
-        signal_type = "caution"
-        reasons.append("장기 추세 양호하나 단기 이탈")
-    else:
-        signal = "⚖️ 횡보 (NEUTRAL)"
-        signal_class = "hold"
-        signal_type = "neutral"
-        reasons.append("뚜렷한 추세 없음")
-    
-    # RSI 기반 분석
-    if rsi is not None and len(rsi) > 0:
-        latest_rsi = rsi[-1]
-        if latest_rsi is not None and not np.isnan(latest_rsi):
-            if latest_rsi > 70:
-                reasons.append(f"RSI 과매수 구간 ({latest_rsi:.1f})")
-                if signal_type in ["hold", "buy"]:
-                    signal = "⚠️ 과매수 주의"
-                    signal_class = "caution"
-            elif latest_rsi < 30:
-                reasons.append(f"RSI 과매도 구간 ({latest_rsi:.1f})")
-                if signal_type in ["sell", "caution"]:
-                    signal = "💡 과매도 반등 가능"
-                    signal_class = "buy"
-    
-    reason_text = f"주가({latest_close:,.0f}원). " + " | ".join(reasons)
-    
-    return signal, signal_class, reason_text, reasons
-
-
 def fetch_stock_data(ticker, period='1y'):
     """종목 데이터 수집 및 기술적 분석"""
-    cache_key = f"{ticker}_{period}_{datetime.now().strftime('%Y%m%d%H%M')}"
+    cache_key = f"{ticker}_{period}"
     cached = get_cache(cache_key)
     if cached:
         return cached
     
     try:
-        df = yf.download(ticker, period=period, progress=False)
+        df = yf.download(ticker, period=period, progress=False, threads=False, auto_adjust=False)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.droplevel(1)
         if df.empty:
@@ -326,7 +269,7 @@ def fetch_stock_data(ticker, period='1y'):
         
         # 등락률 계산
         change_pct = 0
-        if len(closes) >= 2:
+        if len(closes) >= 2 and closes[-2] != 0:
             change_pct = ((closes[-1] - closes[-2]) / closes[-2]) * 100
         
         result = {
@@ -373,6 +316,12 @@ def index():
 def get_stock(ticker):
     """단일 종목 데이터 API"""
     period = request.args.get('period', '1y')
+    period = period if period in VALID_PERIODS else '1y'
+
+    ticker = normalize_ticker(ticker)
+    if not is_valid_ticker(ticker):
+        return jsonify({'success': False, 'error': '유효하지 않은 티커 형식입니다.'}), 400
+
     data = fetch_stock_data(ticker, period)
     if data:
         return jsonify({'success': True, 'data': clean_nan_values(data)})
@@ -383,18 +332,40 @@ def get_stock(ticker):
 @login_required
 def get_all_stocks():
     """모든 관심 종목 데이터 API"""
+    period = request.args.get('period', '1y')
+    period = period if period in VALID_PERIODS else '1y'
+
     user_tickers = load_user_tickers()
+    user_ticker_names = set(user_tickers.keys())
     all_tickers = {**DEFAULT_TICKERS, **user_tickers}
-    
+
     results = {}
-    for name, ticker in all_tickers.items():
-        data = fetch_stock_data(ticker)
-        if data:
-            data['name'] = name
-            results[ticker] = data
-    
+
+    def fetch_one(item):
+        name, raw_ticker = item
+        ticker = normalize_ticker(raw_ticker)
+        if not is_valid_ticker(ticker):
+            return ticker, None, name
+        data = fetch_stock_data(ticker, period)
+        return ticker, data, name
+
+    items = list(all_tickers.items())
+    if not items:
+        return jsonify({'success': True, 'data': {}, 'count': 0})
+
+    max_workers = min(4, len(items))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(fetch_one, item) for item in items]
+        for future in as_completed(futures):
+            ticker, data, name = future.result()
+            if data:
+                data['name'] = name
+                data['name_key'] = name
+                data['is_user_added'] = name in user_ticker_names
+                results[ticker] = data
+
     return jsonify({
-        'success': True, 
+        'success': True,
         'data': clean_nan_values(results),
         'count': len(results)
     })
@@ -407,10 +378,20 @@ def search_stocks():
     query = request.args.get('q', '').strip()
     if not query or len(query) < 1:
         return jsonify({'success': False, 'error': '검색어를 입력해주세요.'}), 400
-    
+
+    try:
+        limit = int(request.args.get('limit', '10'))
+    except ValueError:
+        return jsonify({'success': False, 'error': 'limit은 숫자여야 합니다.'}), 400
+
+    if limit <= 0:
+        return jsonify({'success': False, 'error': 'limit은 1 이상이어야 합니다.'}), 400
+
+    limit = min(limit, MAX_SEARCH_RESULTS)
+
     # 개선된 한국 주식 검색
     try:
-        results = search_korean_stocks(query)
+        results = search_korean_stocks(query, limit=limit)
         
         if not results:
             # Yahoo Finance로 직접 시도
@@ -445,38 +426,47 @@ def manage_tickers():
         })
     
     elif request.method == 'POST':
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         name = data.get('name', '').strip()
-        ticker = data.get('ticker', '').strip()
-        
-        if not name or not ticker:
-            return jsonify({'success': False, 'error': '종목명과 티커를 모두 입력해주세요.'}), 400
-        
-        # 티커 형식 검증 및 자동 보정
-        if ticker.isdigit() and len(ticker) == 6:
-            ticker = f"{ticker}.KS"
-        
-        if not (ticker.endswith('.KS') or ticker.endswith('.KQ')):
+        ticker = normalize_ticker(data.get('ticker', '').strip())
+
+        if not ticker:
+            return jsonify({'success': False, 'error': '티커를 입력해주세요.'}), 400
+
+        if not is_valid_ticker(ticker):
+            return jsonify({'success': False, 'error': '유효하지 않은 티커 형식입니다.'}), 400
+
+        if not is_korean_market_ticker(ticker):
             return jsonify({'success': False, 'error': '올바른 한국 주식 코드 형식이 아닙니다. (예: 005930.KS)'}), 400
-        
+
         # 데이터 유효성 검사
         test_data = fetch_stock_data(ticker, period='5d')
         if not test_data:
             return jsonify({'success': False, 'error': '해당 종목의 데이터를 가져올 수 없습니다. 코드를 확인해주세요.'}), 400
-        
+
+        # 종목명 미입력 시 종목코드 기반으로 회사명 자동 매핑
+        if not name:
+            name = resolve_stock_display_name(ticker)
+
         user_tickers = load_user_tickers()
+        all_tickers = {**DEFAULT_TICKERS, **user_tickers}
+
+        if ticker in all_tickers.values():
+            return jsonify({'success': False, 'error': '이미 메인 종목에 추가된 티커입니다.'}), 409
+
         user_tickers[name] = ticker
         save_user_tickers(user_tickers)
-        
+
         return jsonify({
-            'success': True, 
+            'success': True,
             'message': f'{name}({ticker})가 추가되었습니다.',
             'ticker': ticker,
+            'name': name,
             'data': test_data
         })
     
     elif request.method == 'DELETE':
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         name = data.get('name', '').strip()
         
         user_tickers = load_user_tickers()
@@ -491,17 +481,21 @@ def manage_tickers():
 @login_required
 def market_status():
     """시장 상태 확인 API"""
-    now = datetime.now()
-    korean_hour = (now.hour + 9) % 24  # UTC to KST (approximate)
-    
-    # 한국 장 시간: 09:00 ~ 15:30
-    is_open = 9 <= korean_hour < 15 or (korean_hour == 15 and now.minute <= 30)
-    
+    now_utc = datetime.now(timezone.utc)
+    now_kst = now_utc.astimezone(timezone(timedelta(hours=9)))
+
+    # 한국 장 시간: 09:00 ~ 15:30 (월~금)
+    is_weekday = now_kst.weekday() < 5
+    is_open = is_weekday and (
+        9 <= now_kst.hour < 15 or (now_kst.hour == 15 and now_kst.minute <= 30)
+    )
+
     return jsonify({
         'success': True,
         'is_market_open': is_open,
-        'current_time': now.isoformat(),
-        'korean_time': f"{korean_hour:02d}:{now.minute:02d}"
+        'is_open': is_open,  # 프론트 호환성
+        'current_time_utc': now_utc.isoformat(),
+        'korean_time': now_kst.isoformat()
     })
 
 
@@ -570,24 +564,49 @@ KOREAN_STOCKS = {
     '한게임': '174790.KQ', '게임빌': '063080.KQ', '컴투스홀딩스': '063080.KQ'
 }
 
-def search_korean_stocks(query: str) -> List[Dict]:
+def resolve_stock_display_name(ticker: str) -> str:
+    """티커 기반 종목명 자동 매핑 (로컬 DB 우선, Yahoo Finance 보조)"""
+    normalized = normalize_ticker(ticker)
+
+    # 1) 내장 한국 종목 DB 우선 사용
+    for stock_name, stock_ticker in KOREAN_STOCKS.items():
+        if normalize_ticker(stock_ticker) == normalized and 'undefined' not in stock_ticker.lower():
+            return stock_name.strip()
+
+    # 2) Yahoo Finance 메타정보 사용 (가능한 경우)
+    try:
+        info = yf.Ticker(normalized).info
+        yf_name = (info.get('longName') or info.get('shortName') or '').strip() if info else ''
+        if yf_name:
+            return yf_name
+    except Exception:
+        pass
+
+    # 3) 최종 fallback
+    return normalized
+
+
+def search_korean_stocks(query: str, limit: int = 10) -> List[Dict]:
     """주식 이름으로 검색"""
     query = query.lower().strip()
     results = []
-    
+
+    def is_listable_ticker(ticker: str) -> bool:
+        if not ticker:
+            return False
+        t = ticker.strip().upper()
+        return 'UNDEFINED' not in t and t != 'N/A'
+
     # 정확한 매칭 먼저
     for name, ticker in KOREAN_STOCKS.items():
-        if query in name.lower():
+        if query in name.lower() and is_listable_ticker(ticker):
             results.append({
                 'name': name,
                 'ticker': ticker,
                 'market': 'KOSPI' if '.KS' in ticker else 'KOSDAQ' if '.KQ' in ticker else 'ETC',
                 'exact': query == name.lower()
             })
-    
-    # 정확한 매칭 우선 정렬
-    results.sort(key=lambda x: (not x['exact'], x['name']))
-    
+
     # Yahoo Finance에서 추가 검증 (선택사항)
     if len(results) < 5:
         try:
@@ -598,7 +617,7 @@ def search_korean_stocks(query: str) -> List[Dict]:
                     tickers = [f"{query}.KS", f"{query}.KQ"]
                 else:
                     tickers = [query]
-                
+
                 for t in tickers:
                     try:
                         stock = yf.Ticker(t)
@@ -611,12 +630,20 @@ def search_korean_stocks(query: str) -> List[Dict]:
                                 'market': 'KOSPI' if t.endswith('.KS') else 'KOSDAQ' if t.endswith('.KQ') else 'OTHER',
                                 'exact': False
                             })
-                    except:
+                    except Exception:
                         pass
-        except:
+        except Exception:
             pass
-    
-    return results[:10]  # 최대 10개 결과
+
+    # 중복 제거 (티커 기준) + 정확 매칭 우선 정렬
+    dedup = {}
+    for item in results:
+        key = item['ticker'].upper()
+        if key not in dedup or item.get('exact'):
+            dedup[key] = item
+
+    sorted_results = sorted(dedup.values(), key=lambda x: (not x['exact'], x['name']))
+    return sorted_results[:limit]  # 요청 수만큼 결과 반환
 
 @app.route('/api/portfolio', methods=['GET', 'POST'])
 @login_required
@@ -632,20 +659,23 @@ def portfolio_api():
     
     elif request.method == 'POST':
         # 새 보유 종목 추가
-        data = request.get_json()
-        ticker = data.get('ticker', '').strip()
+        data = request.get_json(silent=True) or {}
+        ticker = normalize_ticker(data.get('ticker', '').strip())
         name = data.get('name', '').strip()
-        shares = data.get('shares', 0)
-        avg_price = data.get('avg_price', 0)
         purchase_date = data.get('purchase_date')
-        
-        if not ticker or not name or shares <= 0 or avg_price <= 0:
+
+        try:
+            shares = parse_positive_float(data.get('shares'), 'shares')
+            avg_price = parse_positive_float(data.get('avg_price'), 'avg_price')
+        except ValueError as e:
+            return jsonify({'success': False, 'error': str(e)}), 400
+
+        if not ticker or not name:
             return jsonify({'success': False, 'error': '모든 필드를 올바르게 입력해주세요.'}), 400
-        
-        # 티커 형식 보정
-        if ticker.isdigit() and len(ticker) == 6:
-            ticker = f"{ticker}.KS"
-        
+
+        if not is_valid_ticker(ticker):
+            return jsonify({'success': False, 'error': '유효하지 않은 티커 형식입니다.'}), 400
+
         holding = portfolio_manager.add_holding(ticker, name, shares, avg_price, purchase_date)
         return jsonify({
             'success': True,
@@ -667,14 +697,18 @@ def portfolio_holding_api(holding_id):
     
     elif request.method == 'PUT':
         # 보유 종목 수정
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         field = data.get('field')  # 'shares' 또는 'avg_price'
-        value = data.get('value')
-        
+
+        try:
+            value = parse_positive_float(data.get('value'), field or 'value')
+        except ValueError as e:
+            return jsonify({'success': False, 'error': str(e)}), 400
+
         if field == 'shares':
-            result = portfolio_manager.update_shares(holding_id, float(value))
+            result = portfolio_manager.update_shares(holding_id, value)
         elif field == 'avg_price':
-            result = portfolio_manager.update_avg_price(holding_id, float(value))
+            result = portfolio_manager.update_avg_price(holding_id, value)
         else:
             return jsonify({'success': False, 'error': '잘못된 필드입니다.'}), 400
         
@@ -693,11 +727,12 @@ from backtest import run_backtest
 def backtest_api(ticker):
     """백테스팅 API"""
     period = request.args.get('period', '1y')
-    
-    # 티커 형식 보정
-    if ticker.isdigit() and len(ticker) == 6:
-        ticker = f"{ticker}.KS"
-    
+    period = period if period in {'6m', '1y', '2y', '3y'} else '1y'
+
+    ticker = normalize_ticker(ticker)
+    if not is_valid_ticker(ticker):
+        return jsonify({'success': False, 'error': '유효하지 않은 티커 형식입니다.'}), 400
+
     result = run_backtest(ticker, period)
     return jsonify(result)
 

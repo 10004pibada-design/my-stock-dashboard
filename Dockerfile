@@ -18,5 +18,5 @@ COPY . .
 # 포트 노출
 EXPOSE 5000
 
-# 실행 명령
-CMD ["python", "websocket_server.py"]
+# 실행 명령 (Flask API via Gunicorn)
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "--timeout", "120"]

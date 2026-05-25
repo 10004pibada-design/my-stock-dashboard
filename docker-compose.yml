@@ -8,9 +8,10 @@ services:
     environment:
       - FLASK_ENV=production
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      - ACCESS_PASSWORD=${ACCESS_PASSWORD:-change-me}
     volumes:
       - ./user_tickers.json:/app/user_tickers.json
-      - ./portfolio.json:/app/portfolio.json
+      - ./portfolio.db:/app/portfolio.db
     restart: unless-stopped
     
   # 선택사항: Redis for WebSocket 메시지 브로커 (다중 인스턴스 지원)
