@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  stock-dashboard:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=production
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+    volumes:
+      - ./user_tickers.json:/app/user_tickers.json
+      - ./portfolio.json:/app/portfolio.json
+    restart: unless-stopped
+    
+  # 선택사항: Redis for WebSocket 메시지 브로커 (다중 인스턴스 지원)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    profiles:
+      - with-redis
+
+volumes:
+  redis_data:

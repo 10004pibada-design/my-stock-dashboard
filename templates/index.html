@@ -6,6 +6,7 @@
     <title>📈 스마트 주식 대시보드 Pro</title>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -23,6 +24,12 @@
                 <div class="market-status" id="marketStatus">
                     <span class="status-dot"></span>
                     <span class="status-text">시장 확인 중...</span>
+                </div>
+                <div class="ws-status" id="wsStatus" title="WebSocket 실시간 연결 상태">
+                    <span class="ws-indicator disconnected">
+                        <i class="fas fa-bolt"></i>
+                    </span>
+                    <span class="ws-text">연결 중...</span>
                 </div>
                 <button class="btn-icon" id="refreshBtn" title="새로고침">
                     <i class="fas fa-sync-alt"></i>
@@ -57,6 +64,119 @@
                     <button class="chip" data-code="035720.KQ">카카오</button>
                     <button class="chip" data-code="051910.KS">LG화학</button>
                     <button class="chip" data-code="006400.KS">삼성SDI</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 포트폴리오 패널 -->
+        <section class="portfolio-section" id="portfolioSection">
+            <div class="portfolio-card">
+                <div class="portfolio-header">
+                    <h3><i class="fas fa-wallet"></i> 내 포트폴리오</h3>
+                    <div class="portfolio-summary" id="portfolioSummary">
+                        <span class="summary-item">
+                            <span class="label">총 투자금</span>
+                            <span class="value" id="totalInvested">-</span>
+                        </span>
+                        <span class="summary-item">
+                            <span class="label">현재 가치</span>
+                            <span class="value" id="currentValue">-</span>
+                        </span>
+                        <span class="summary-item">
+                            <span class="label">수익률</span>
+                            <span class="value" id="totalReturn">-</span>
+                        </span>
+                    </div>
+                    <button class="btn-toggle" id="togglePortfolioBtn">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                </div>
+                <div class="portfolio-content" id="portfolioContent">
+                    <div class="portfolio-form">
+                        <h4>종목 추가</h4>
+                        <div class="form-row">
+                            <input type="text" id="portfolioTicker" placeholder="종목코드 (예: 005930.KS)" maxlength="12">
+                            <input type="text" id="portfolioName" placeholder="종목명 (예: 삼성전자)">
+                            <input type="number" id="portfolioShares" placeholder="보유수량" min="0" step="1">
+                            <input type="number" id="portfolioPrice" placeholder="평균단가 (원)" min="0" step="1">
+                            <button class="btn-primary" id="addPortfolioBtn">
+                                <i class="fas fa-plus"></i> 추가
+                            </button>
+                        </div>
+                    </div>
+                    <div class="portfolio-table-wrapper">
+                        <table class="portfolio-table" id="portfolioTable">
+                            <thead>
+                                <tr>
+                                    <th>종목명</th>
+                                    <th>보유수량</th>
+                                    <th>평균단가</th>
+                                    <th>현재가</th>
+                                    <th>평가금액</th>
+                                    <th>손익</th>
+                                    <th>수익률</th>
+                                    <th>관리</th>
+                                </tr>
+                            </thead>
+                            <tbody id="portfolioTableBody">
+                                <tr class="empty-row">
+                                    <td colspan="8">보유 종목이 없습니다. 종목을 추가하세요.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 백테스팅 패널 -->
+        <section class="backtest-section" id="backtestSection">
+            <div class="backtest-card">
+                <div class="backtest-header">
+                    <h3><i class="fas fa-history"></i> 백테스팅 - 과거 매매 신호 검증</h3>
+                    <button class="btn-toggle" id="toggleBacktestBtn">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                </div>
+                <div class="backtest-content" id="backtestContent">
+                    <div class="backtest-form">
+                        <div class="form-group">
+                            <label>종목코드</label>
+                            <input type="text" id="backtestTicker" placeholder="예: 005930.KS" value="005930.KS">
+                        </div>
+                        <div class="form-group">
+                            <label>테스트 기간</label>
+                            <select id="backtestPeriod">
+                                <option value="6m">6개월</option>
+                                <option value="1y" selected>1년</option>
+                                <option value="2y">2년</option>
+                                <option value="3y">3년</option>
+                            </select>
+                        </div>
+                        <button class="btn-primary" id="runBacktestBtn">
+                            <i class="fas fa-play"></i> 백테스트 실행
+                        </button>
+                    </div>
+                    <div class="backtest-results" id="backtestResults" style="display: none;">
+                        <div class="results-summary" id="backtestSummary"></div>
+                        <div class="results-chart" id="backtestChart"></div>
+                        <div class="trades-table-wrapper">
+                            <h4>거래 내역</h4>
+                            <table class="trades-table" id="tradesTable">
+                                <thead>
+                                    <tr>
+                                        <th>진입일</th>
+                                        <th>진입가</th>
+                                        <th>청산일</th>
+                                        <th>청산가</th>
+                                        <th>손익</th>
+                                        <th>수익률</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tradesTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -101,6 +221,9 @@
             <span><i class="fas fa-clock"></i> 마지막 업데이트: <span id="lastUpdate">-</span></span>
             <span class="auto-refresh-indicator" id="refreshIndicator">
                 <i class="fas fa-sync fa-spin"></i> 자동 갱신 중
+            </span>
+            <span class="ws-mode-badge" id="wsModeBadge" style="display: none;">
+                <i class="fas fa-bolt"></i> 실시간 모드
             </span>
         </div>
 

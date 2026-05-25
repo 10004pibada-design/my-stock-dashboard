@@ -1007,6 +1007,613 @@ document.addEventListener('DOMContentLoaded', () => {
     App.init();
 });
 
+// ========================================
+// 포트폴리오 관리
+// ========================================
+const PortfolioManager = {
+    holdings: [],
+    summary: {},
+    
+    init() {
+        this.loadPortfolio();
+        this.setupEventListeners();
+    },
+    
+    setupEventListeners() {
+        // 포트폴리오 토글 버튼
+        const toggleBtn = document.getElementById('togglePortfolioBtn');
+        const content = document.getElementById('portfolioContent');
+        
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', () => {
+                content.classList.toggle('collapsed');
+                toggleBtn.classList.toggle('collapsed');
+            });
+        }
+        
+        // 종목 추가 버튼
+        const addBtn = document.getElementById('addPortfolioBtn');
+        if (addBtn) {
+            addBtn.addEventListener('click', () => this.addHolding());
+        }
+        
+        // 포트폴리오 헤더 클릭으로도 토글
+        const header = document.querySelector('.portfolio-header');
+        if (header) {
+            header.addEventListener('click', (e) => {
+                if (e.target.closest('.btn-toggle')) return; // 버튼 클릭은 중복 방지
+                content.classList.toggle('collapsed');
+                if (toggleBtn) toggleBtn.classList.toggle('collapsed');
+            });
+        }
+    },
+    
+    async loadPortfolio() {
+        try {
+            const response = await fetch('/api/portfolio');
+            const result = await response.json();
+            
+            if (result.success) {
+                this.holdings = result.data.holdings || [];
+                this.summary = result.data.summary || {};
+                this.renderPortfolio();
+            }
+        } catch (error) {
+            console.error('Error loading portfolio:', error);
+        }
+    },
+    
+    renderPortfolio() {
+        // 요약 정보 업데이트
+        const totalInvestedEl = document.getElementById('totalInvested');
+        const currentValueEl = document.getElementById('currentValue');
+        const totalReturnEl = document.getElementById('totalReturn');
+        
+        if (totalInvestedEl) {
+            totalInvestedEl.textContent = this.summary.total_invested 
+                ? Utils.formatNumber(this.summary.total_invested) + '원'
+                : '-';
+        }
+        
+        if (currentValueEl) {
+            currentValueEl.textContent = this.summary.current_value 
+                ? Utils.formatNumber(this.summary.current_value) + '원'
+                : '-';
+        }
+        
+        if (totalReturnEl) {
+            const returnPct = this.summary.return_pct || 0;
+            const isPositive = returnPct >= 0;
+            totalReturnEl.textContent = `${isPositive ? '+' : ''}${returnPct.toFixed(2)}%`;
+            totalReturnEl.className = isPositive ? 'value profit-positive' : 'value profit-negative';
+        }
+        
+        // 테이블 업데이트
+        const tbody = document.getElementById('portfolioTableBody');
+        if (!tbody) return;
+        
+        if (this.holdings.length === 0) {
+            tbody.innerHTML = `
+                <tr class="empty-row">
+                    <td colspan="8">보유 종목이 없습니다. 종목을 추가하세요.</td>
+                </tr>
+            `;
+            return;
+        }
+        
+        tbody.innerHTML = this.holdings.map(holding => {
+            const isProfit = holding.profit_loss >= 0;
+            const profitClass = isProfit ? 'profit-positive' : 'profit-negative';
+            const profitIcon = isProfit ? '▲' : '▼';
+            
+            return `
+                <tr data-id="${holding.id}">
+                    <td>
+                        <strong>${holding.name}</strong>
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">${holding.ticker}</div>
+                    </td>
+                    <td>${Utils.formatNumber(holding.shares)}주</td>
+                    <td>${Utils.formatNumber(Math.round(holding.avg_price))}원</td>
+                    <td>${Utils.formatNumber(Math.round(holding.current_price || 0))}원</td>
+                    <td>${Utils.formatNumber(Math.round(holding.current_value || 0))}원</td>
+                    <td class="${profitClass}">${profitIcon} ${Utils.formatNumber(Math.abs(Math.round(holding.profit_loss || 0)))}원</td>
+                    <td class="${profitClass}">${profitIcon} ${Math.abs(holding.return_pct || 0).toFixed(2)}%</td>
+                    <td>
+                        <button class="btn-small btn-delete-small" onclick="PortfolioManager.removeHolding('${holding.id}')">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    },
+    
+    async addHolding() {
+        const tickerInput = document.getElementById('portfolioTicker');
+        const nameInput = document.getElementById('portfolioName');
+        const sharesInput = document.getElementById('portfolioShares');
+        const priceInput = document.getElementById('portfolioPrice');
+        
+        const ticker = tickerInput?.value?.trim();
+        const name = nameInput?.value?.trim();
+        const shares = parseFloat(sharesInput?.value);
+        const avgPrice = parseFloat(priceInput?.value);
+        
+        if (!ticker || !name || !shares || !avgPrice) {
+            Notification.toast('입력 오류', '모든 필드를 입력해주세요.', 'warning');
+            return;
+        }
+        
+        try {
+            const response = await fetch('/api/portfolio', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ticker: ticker,
+                    name: name,
+                    shares: shares,
+                    avg_price: avgPrice
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                Notification.toast('추가 완료', result.message, 'success');
+                
+                // 입력 초기화
+                tickerInput.value = '';
+                nameInput.value = '';
+                sharesInput.value = '';
+                priceInput.value = '';
+                
+                // 포트폴리오 다시 로드
+                await this.loadPortfolio();
+                
+                // 관심 종목에도 자동 추가
+                await SearchManager.addStock(name, ticker);
+            } else {
+                Notification.toast('추가 실패', result.error || '종목을 추가할 수 없습니다.', 'error');
+            }
+        } catch (error) {
+            Notification.toast('오류', '종목 추가 중 오류가 발생했습니다.', 'error');
+        }
+    },
+    
+    async removeHolding(holdingId) {
+        if (!confirm('해당 종목을 포트폴리오에서 삭제하시겠습니까?')) return;
+        
+        try {
+            const response = await fetch(`/api/portfolio/${holdingId}`, {
+                method: 'DELETE'
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                Notification.toast('삭제 완료', result.message, 'success');
+                await this.loadPortfolio();
+            } else {
+                Notification.toast('삭제 실패', result.error || '종목을 삭제할 수 없습니다.', 'error');
+            }
+        } catch (error) {
+            Notification.toast('오류', '종목 삭제 중 오류가 발생했습니다.', 'error');
+        }
+    }
+};
+
+// ========================================
+// 백테스팅 관리
+// ========================================
+const BacktestManager = {
+    chart: null,
+    
+    init() {
+        this.setupEventListeners();
+    },
+    
+    setupEventListeners() {
+        // 토글 버튼
+        const toggleBtn = document.getElementById('toggleBacktestBtn');
+        const content = document.getElementById('backtestContent');
+        
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', () => {
+                content.classList.toggle('collapsed');
+                toggleBtn.classList.toggle('collapsed');
+            });
+        }
+        
+        // 헤더 클릭으로도 토글
+        const header = document.querySelector('.backtest-header');
+        if (header) {
+            header.addEventListener('click', (e) => {
+                if (e.target.closest('.btn-toggle')) return;
+                content.classList.toggle('collapsed');
+                if (toggleBtn) toggleBtn.classList.toggle('collapsed');
+            });
+        }
+        
+        // 백테스트 실행 버튼
+        const runBtn = document.getElementById('runBacktestBtn');
+        if (runBtn) {
+            runBtn.addEventListener('click', () => this.runBacktest());
+        }
+    },
+    
+    async runBacktest() {
+        const ticker = document.getElementById('backtestTicker').value.trim();
+        const period = document.getElementById('backtestPeriod').value;
+        
+        if (!ticker) {
+            Notification.toast('입력 오류', '종목코드를 입력해주세요.', 'warning');
+            return;
+        }
+        
+        Notification.toast('백테스트 실행 중', '과거 데이터를 분석하고 있습니다...', 'info');
+        
+        try {
+            const response = await fetch(`/api/backtest/${ticker}?period=${period}`);
+            const result = await response.json();
+            
+            if (result.success) {
+                this.displayResults(result.data);
+                Notification.toast('백테스트 완료', '분석 결과를 확인하세요!', 'success');
+            } else {
+                Notification.toast('백테스트 실패', result.error || '분석 중 오류가 발생했습니다.', 'error');
+            }
+        } catch (error) {
+            Notification.toast('오류', '백테스트 실행 중 오류가 발생했습니다.', 'error');
+        }
+    },
+    
+    displayResults(data) {
+        const resultsSection = document.getElementById('backtestResults');
+        const summaryDiv = document.getElementById('backtestSummary');
+        const tradesBody = document.getElementById('tradesTableBody');
+        
+        resultsSection.style.display = 'block';
+        
+        // 요약 카드 렌더링
+        const stats = data;
+        summaryDiv.innerHTML = `
+            <div class="summary-card">
+                <span class="label">총 거래 횟수</span>
+                <span class="value">${stats.total_trades}회</span>
+            </div>
+            <div class="summary-card">
+                <span class="label">승률</span>
+                <span class="value">${stats.win_rate}%</span>
+            </div>
+            <div class="summary-card">
+                <span class="label">총 수익률</span>
+                <span class="value ${stats.total_profit_pct >= 0 ? 'positive' : 'negative'}">
+                    ${stats.total_profit_pct >= 0 ? '+' : ''}${stats.total_profit_pct}%
+                </span>
+            </div>
+            <div class="summary-card">
+                <span class="label">평균 수익/거래</span>
+                <span class="value ${stats.avg_profit_per_trade >= 0 ? 'positive' : 'negative'}">
+                    ${stats.avg_profit_per_trade >= 0 ? '+' : ''}${stats.avg_profit_per_trade}%
+                </span>
+            </div>
+            <div class="summary-card">
+                <span class="label">최대 낙폭</span>
+                <span class="value">${stats.max_drawdown}%</span>
+            </div>
+            <div class="summary-card">
+                <span class="label">샤프 비율</span>
+                <span class="value">${stats.sharpe_ratio}</span>
+            </div>
+        `;
+        
+        // 차트 렌더링
+        this.renderEquityChart(data.equity_curve);
+        
+        // 거래 내역 렌더링
+        if (data.trades && data.trades.length > 0) {
+            tradesBody.innerHTML = data.trades.map(trade => {
+                const isProfit = trade.profit >= 0;
+                const profitClass = isProfit ? 'profit-positive' : 'profit-negative';
+                const profitIcon = isProfit ? '▲' : '▼';
+                
+                return `
+                    <tr>
+                        <td>${trade.entry_date}</td>
+                        <td>${Utils.formatNumber(Math.round(trade.entry_price))}원</td>
+                        <td>${trade.exit_date}</td>
+                        <td>${Utils.formatNumber(Math.round(trade.exit_price))}원</td>
+                        <td class="${profitClass}">${profitIcon} ${Utils.formatNumber(Math.abs(Math.round(trade.profit)))}원</td>
+                        <td class="${profitClass}">${profitIcon} ${Math.abs(trade.profit_pct).toFixed(2)}%</td>
+                    </tr>
+                `;
+            }).join('');
+        } else {
+            tradesBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">거래 내역이 없습니다.</td></tr>';
+        }
+    },
+    
+    renderEquityChart(equityData) {
+        const chartContainer = document.getElementById('backtestChart');
+        if (!chartContainer) return;
+        
+        if (this.chart) {
+            this.chart.dispose();
+        }
+        
+        this.chart = echarts.init(chartContainer, AppState.darkMode ? 'dark' : undefined);
+        
+        const dates = equityData.map(d => d.date);
+        const equities = equityData.map(d => d.equity);
+        const prices = equityData.map(d => d.price);
+        
+        const option = {
+            animation: true,
+            backgroundColor: 'transparent',
+            title: {
+                text: '자산 곡선',
+                left: 'center',
+                textStyle: { fontSize: 14 }
+            },
+            tooltip: {
+                trigger: 'axis',
+                axisPointer: { type: 'cross' }
+            },
+            legend: {
+                data: ['자산 가치', '주가'],
+                top: 30
+            },
+            grid: {
+                left: '3%',
+                right: '4%',
+                bottom: '3%',
+                top: '20%',
+                containLabel: true
+            },
+            xAxis: {
+                type: 'category',
+                data: dates,
+                axisLabel: { fontSize: 10, rotate: 45 }
+            },
+            yAxis: [
+                {
+                    type: 'value',
+                    name: '자산',
+                    axisLabel: {
+                        formatter: value => (value / 1000000).toFixed(1) + 'M'
+                    }
+                },
+                {
+                    type: 'value',
+                    name: '주가',
+                    axisLabel: {
+                        formatter: value => value.toLocaleString()
+                    }
+                }
+            ],
+            series: [
+                {
+                    name: '자산 가치',
+                    type: 'line',
+                    data: equities,
+                    smooth: true,
+                    lineStyle: { color: '#3b82f6', width: 2 },
+                    itemStyle: { color: '#3b82f6' }
+                },
+                {
+                    name: '주가',
+                    type: 'line',
+                    yAxisIndex: 1,
+                    data: prices,
+                    smooth: true,
+                    lineStyle: { color: '#10b981', width: 1, opacity: 0.7 },
+                    itemStyle: { color: '#10b981' }
+                }
+            ]
+        };
+        
+        this.chart.setOption(option);
+        
+        window.addEventListener('resize', () => this.chart.resize());
+    }
+};
+
+// ========================================
+// WebSocket / Socket.IO 실시간 연결
+// ========================================
+const WebSocketManager = {
+    socket: null,
+    connected: false,
+    subscribedTickers: new Set(),
+    
+    init() {
+        this.connect();
+    },
+    
+    connect() {
+        try {
+            // Socket.IO 연결
+            this.socket = io(window.location.origin, {
+                transports: ['websocket', 'polling'],
+                reconnection: true,
+                reconnectionAttempts: 5,
+                reconnectionDelay: 1000
+            });
+            
+            this.socket.on('connect', () => {
+                console.log('[WebSocket] Connected to server');
+                this.connected = true;
+                this.updateStatus('connected');
+                Notification.toast('실시간 연결됨', '실시간 시세 스트리밍이 시작되었습니다.', 'success');
+                
+                // 현재 표시된 모든 종목 구독
+                Object.keys(AppState.tickers).forEach(ticker => {
+                    this.subscribe(ticker);
+                });
+                
+                // 실시간 모드 UI 활성화
+                document.getElementById('wsModeBadge').style.display = 'inline-flex';
+            });
+            
+            this.socket.on('disconnect', (reason) => {
+                console.log('[WebSocket] Disconnected:', reason);
+                this.connected = false;
+                this.updateStatus('disconnected');
+                document.getElementById('wsModeBadge').style.display = 'none';
+            });
+            
+            this.socket.on('connect_error', (error) => {
+                console.log('[WebSocket] Connection error:', error);
+                this.updateStatus('error');
+            });
+            
+            // 실시간 가격 업데이트 수신
+            this.socket.on('price_update', (data) => {
+                this.handlePriceUpdate(data);
+            });
+            
+            // 기타 이벤트
+            this.socket.on('subscribed', (data) => {
+                console.log('[WebSocket] Subscribed:', data);
+            });
+            
+            this.socket.on('broadcast', (data) => {
+                console.log('[WebSocket] Broadcast:', data);
+            });
+            
+        } catch (error) {
+            console.error('[WebSocket] Init error:', error);
+            this.updateStatus('error');
+        }
+    },
+    
+    subscribe(ticker) {
+        if (this.socket && this.connected && !this.subscribedTickers.has(ticker)) {
+            this.socket.emit('subscribe', { ticker });
+            this.subscribedTickers.add(ticker);
+        }
+    },
+    
+    unsubscribe(ticker) {
+        if (this.socket && this.connected && this.subscribedTickers.has(ticker)) {
+            this.socket.emit('unsubscribe', { ticker });
+            this.subscribedTickers.delete(ticker);
+        }
+    },
+    
+    handlePriceUpdate(data) {
+        // 실시간 가격 업데이트 처리
+        const { ticker, price, change_pct, volume, timestamp } = data;
+        
+        // AppState에 업데이트
+        if (AppState.tickers[ticker]) {
+            const tickerData = AppState.tickers[ticker];
+            tickerData.latest_price = price;
+            tickerData.change_pct = change_pct;
+            tickerData.latest_vol = volume;
+            tickerData.updated_at = timestamp;
+            
+            // UI 업데이트
+            const cardId = `card-${ticker.replace(/\./g, '_')}`;
+            const card = document.getElementById(cardId);
+            if (card) {
+                // 현재가 업데이트
+                const kpiValues = card.querySelectorAll('.kpi-value');
+                if (kpiValues[0]) {
+                    const changeClass = change_pct > 0 ? 'up' : change_pct < 0 ? 'down' : 'neutral';
+                    kpiValues[0].className = `kpi-value ${changeClass}`;
+                    kpiValues[0].innerHTML = `${Utils.formatNumber(Math.round(price))}<span class="unit">원</span>`;
+                    
+                    // 깜빡임 효과 추가
+                    kpiValues[0].classList.add('price-flash');
+                    setTimeout(() => kpiValues[0].classList.remove('price-flash'), 500);
+                }
+                
+                // 거래량 업데이트
+                if (kpiValues[1]) {
+                    kpiValues[1].innerHTML = `${Utils.formatNumber(volume)}<span class="unit">주</span>`;
+                }
+                
+                // 등락률 배지 업데이트
+                const changeBadge = card.querySelector('.change-badge');
+                if (changeBadge) {
+                    const changeClass = change_pct > 0 ? 'up' : change_pct < 0 ? 'down' : 'neutral';
+                    const changeIcon = change_pct > 0 ? '▲' : change_pct < 0 ? '▼' : '-';
+                    changeBadge.className = `change-badge ${changeClass}`;
+                    changeBadge.innerHTML = `${changeIcon} ${Math.abs(change_pct).toFixed(2)}%`;
+                }
+            }
+            
+            // 마지막 업데이트 시간 갱신
+            document.getElementById('lastUpdate').textContent = new Date(timestamp).toLocaleTimeString('ko-KR');
+        }
+    },
+    
+    updateStatus(status) {
+        const wsStatus = document.getElementById('wsStatus');
+        const indicator = wsStatus.querySelector('.ws-indicator');
+        const text = wsStatus.querySelector('.ws-text');
+        
+        indicator.classList.remove('connected', 'disconnected', 'error');
+        
+        switch (status) {
+            case 'connected':
+                indicator.classList.add('connected');
+                text.textContent = '실시간 연결 중';
+                break;
+            case 'disconnected':
+                indicator.classList.add('disconnected');
+                text.textContent = '연결 끊김';
+                break;
+            case 'error':
+                indicator.classList.add('error');
+                text.textContent = '연결 오류';
+                break;
+            default:
+                indicator.classList.add('disconnected');
+                text.textContent = '연결 중...';
+        }
+    },
+    
+    disconnect() {
+        if (this.socket) {
+            this.socket.disconnect();
+        }
+    }
+};
+
+// ========================================
+// 앱 초기화 시 WebSocket 연결 및 포트폴리오 로드
+// ========================================
+// DOM 로드 완료 후 초기화
+const originalInit = App.init;
+App.init = async function() {
+    await originalInit.call(this);
+    // 포트폴리오 초기화
+    PortfolioManager.init();
+    // 백테스팅 초기화
+    BacktestManager.init();
+    // WebSocket 초기화
+    WebSocketManager.init();
+};
+
+// 종목 추가 시 WebSocket 구독
+const originalAddStock = SearchManager.addStock;
+SearchManager.addStock = async function(name, ticker) {
+    await originalAddStock.call(this, name, ticker);
+    WebSocketManager.subscribe(ticker);
+};
+
+// 종목 삭제 시 WebSocket 구독 취소
+const originalRemove = StockCard.remove;
+StockCard.remove = async function(ticker, name) {
+    WebSocketManager.unsubscribe(ticker);
+    await originalRemove.call(this, ticker, name);
+};
+
 // 전역 함수 노출 (HTML에서 사용)
 window.SearchManager = SearchManager;
 window.StockCard = StockCard;
+window.WebSocketManager = WebSocketManager;
+window.PortfolioManager = PortfolioManager;
+window.BacktestManager = BacktestManager;
