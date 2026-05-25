@@ -1611,9 +1611,465 @@ StockCard.remove = async function(ticker, name) {
     await originalRemove.call(this, ticker, name);
 };
 
+// ========================================
+// 추가 차트 관리 (Custom Charts)
+// ========================================
+const CustomChartsManager = {
+    customTickers: [], // {ticker, name, addedAt}
+    charts: {},        // ECharts 인스턴스 저장
+    
+    init() {
+        this.loadCustomCharts();
+        this.bindEvents();
+        this.renderAllCharts();
+    },
+    
+    loadCustomCharts() {
+        const saved = localStorage.getItem('customCharts');
+        if (saved) {
+            this.customTickers = JSON.parse(saved);
+        }
+        this.updateUI();
+    },
+    
+    saveCustomCharts() {
+        localStorage.setItem('customCharts', JSON.stringify(this.customTickers));
+        this.updateUI();
+    },
+    
+    bindEvents() {
+        // 추가 버튼 클릭
+        const addBtn = document.getElementById('addCustomChartBtn');
+        const input = document.getElementById('customTickerInput');
+        
+        if (addBtn) {
+            addBtn.addEventListener('click', () => this.addCustomChart());
+        }
+        
+        if (input) {
+            input.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') this.addCustomChart();
+            });
+        }
+        
+        // 추천 종목 칩 클릭
+        document.querySelectorAll('.custom-chips-section .chip, .custom-charts-form .chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                const code = chip.dataset.code;
+                const name = chip.textContent;
+                this.addCustomChartWithName(code, name);
+            });
+        });
+    },
+    
+    async addCustomChart() {
+        const input = document.getElementById('customTickerInput');
+        const ticker = input.value.trim().toUpperCase();
+        
+        if (!ticker) {
+            Notification.toast('입력 오류', '종목코드를 입력해 주세요.', 'error');
+            return;
+        }
+        
+        // 중복 체크
+        if (this.customTickers.some(t => t.ticker === ticker)) {
+            Notification.toast('중복 오류', '이미 추가된 종목입니다.', 'error');
+            return;
+        }
+        
+        // 종목 정보 가져오기
+        try {
+            const response = await fetch(`/api/stock/${ticker}`);
+            if (!response.ok) throw new Error('종목을 찾을 수 없습니다');
+            
+            const data = await response.json();
+            const name = data.name || ticker;
+            
+            this.addCustomChartWithName(ticker, name);
+            input.value = '';
+            
+            Notification.toast('차트 추가 완료', `${name} 차트가 추가되었습니다.`, 'success');
+        } catch (error) {
+            // API 호출 없이 바로 추가 (이름은 나중에 로드)
+            this.addCustomChartWithName(ticker, ticker);
+            input.value = '';
+            Notification.toast('차트 추가 완료', `${ticker} 차트가 추가되었습니다.`, 'success');
+        }
+    },
+    
+    addCustomChartWithName(ticker, name) {
+        // 중복 체크
+        if (this.customTickers.some(t => t.ticker === ticker)) {
+            Notification.toast('중복 오류', '이미 추가된 종목입니다.', 'error');
+            return;
+        }
+        
+        this.customTickers.push({
+            ticker: ticker,
+            name: name,
+            addedAt: new Date().toISOString()
+        });
+        
+        this.saveCustomCharts();
+        this.renderChart(ticker, name);
+        
+        // WebSocket 구독
+        WebSocketManager.subscribe(ticker);
+    },
+    
+    removeCustomChart(ticker) {
+        this.customTickers = this.customTickers.filter(t => t.ticker !== ticker);
+        this.saveCustomCharts();
+        
+        // 차트 인스턴스 정리
+        if (this.charts[ticker]) {
+            this.charts[ticker].dispose();
+            delete this.charts[ticker];
+        }
+        
+        // DOM에서 제거
+        const chartCard = document.getElementById(`custom-chart-card-${ticker.replace(/\./g, '_')}`);
+        if (chartCard) {
+            chartCard.remove();
+        }
+        
+        // WebSocket 구독 취소
+        WebSocketManager.unsubscribe(ticker);
+        
+        this.updateUI();
+        Notification.toast('차트 삭제 완료', '차트가 삭제되었습니다.', 'success');
+    },
+    
+    updateUI() {
+        const listContainer = document.getElementById('customChartsList');
+        const emptyState = document.getElementById('emptyCustomCharts');
+        
+        if (!listContainer) return;
+        
+        if (this.customTickers.length === 0) {
+            listContainer.innerHTML = `
+                <div class="empty-state" id="emptyCustomCharts">
+                    <i class="fas fa-chart-bar"></i>
+                    <p>추가된 차트가 없습니다.<br>위에서 종목을 추가해 보세요!</p>
+                </div>
+            `;
+        }
+    },
+    
+    async renderAllCharts() {
+        for (const item of this.customTickers) {
+            await this.renderChart(item.ticker, item.name);
+        }
+    },
+    
+    async renderChart(ticker, name) {
+        const listContainer = document.getElementById('customChartsList');
+        if (!listContainer) return;
+        
+        // 빈 상태 제거
+        const emptyState = document.getElementById('emptyCustomCharts');
+        if (emptyState) emptyState.remove();
+        
+        const cardId = `custom-chart-card-${ticker.replace(/\./g, '_')}`;
+        const chartId = `custom-chart-${ticker.replace(/\./g, '_')}`;
+        
+        // 이미 존재하면 업데이트만
+        if (document.getElementById(cardId)) {
+            this.updateChartData(ticker);
+            return;
+        }
+        
+        // 카드 생성
+        const card = document.createElement('div');
+        card.id = cardId;
+        card.className = 'custom-chart-card';
+        card.innerHTML = `
+            <div class="custom-chart-header">
+                <div class="chart-title">
+                    <h4>${name}</h4>
+                    <span class="ticker-badge">${ticker}</span>
+                </div>
+                <button class="btn-icon btn-remove" onclick="CustomChartsManager.removeCustomChart('${ticker}')" title="차트 삭제">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="custom-chart-container" id="${chartId}"></div>
+            <div class="custom-chart-loading">
+                <i class="fas fa-spinner fa-spin"></i> 로딩 중...
+            </div>
+        `;
+        
+        listContainer.appendChild(card);
+        
+        // 데이터 로드 및 차트 렌더링
+        await this.loadAndRenderChart(ticker, chartId);
+    },
+    
+    async loadAndRenderChart(ticker, chartId) {
+        try {
+            const response = await fetch(`/api/stock/${ticker}`);
+            if (!response.ok) throw new Error('데이터 로드 실패');
+            
+            const data = await response.json();
+            
+            // 로딩 표시 제거
+            const card = document.getElementById(`custom-chart-card-${ticker.replace(/\./g, '_')}`);
+            const loading = card?.querySelector('.custom-chart-loading');
+            if (loading) loading.style.display = 'none';
+            
+            // 차트 렌더링
+            this.renderEChart(chartId, data, data.name || ticker);
+            
+            // 이름 업데이트
+            const titleEl = card?.querySelector('h4');
+            if (titleEl && data.name) titleEl.textContent = data.name;
+            
+        } catch (error) {
+            console.error(`차트 로드 오류 (${ticker}):`, error);
+            const card = document.getElementById(`custom-chart-card-${ticker.replace(/\./g, '_')}`);
+            const loading = card?.querySelector('.custom-chart-loading');
+            if (loading) {
+                loading.innerHTML = '<i class="fas fa-exclamation-triangle"></i> 데이터 로드 실패';
+                loading.className = 'custom-chart-loading error';
+            }
+        }
+    },
+    
+    renderEChart(containerId, data, name) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        
+        // 기존 차트 정리
+        if (this.charts[containerId]) {
+            this.charts[containerId].dispose();
+        }
+        
+        const chart = echarts.init(container);
+        this.charts[data.ticker || containerId] = chart;
+        
+        const dates = data.dates || [];
+        const prices = data.prices || [];
+        const ma20 = data.ma20 || [];
+        const ma60 = data.ma60 || [];
+        const volumes = data.volumes || [];
+        
+        const option = {
+            backgroundColor: 'transparent',
+            title: {
+                show: false
+            },
+            tooltip: {
+                trigger: 'axis',
+                axisPointer: {
+                    type: 'cross',
+                    label: {
+                        backgroundColor: '#6a7985'
+                    }
+                },
+                backgroundColor: 'rgba(30, 41, 59, 0.95)',
+                borderColor: '#475569',
+                textStyle: {
+                    color: '#e2e8f0',
+                    fontSize: 12
+                },
+                formatter: function(params) {
+                    let html = `<div style="font-weight:600;margin-bottom:5px;">${params[0].axisValue}</div>`;
+                    params.forEach(p => {
+                        const color = p.color;
+                        html += `<div style="display:flex;align-items:center;margin:3px 0;">
+                            <span style="display:inline-block;width:10px;height:10px;background:${color};border-radius:50%;margin-right:8px;"></span>
+                            <span style="flex:1;">${p.seriesName}:</span>
+                            <span style="font-weight:600;margin-left:10px;">`;
+                        if (typeof p.value === 'number') {
+                            html += p.value.toLocaleString();
+                        } else {
+                            html += p.value;
+                        }
+                        html += '</span></div>';
+                    });
+                    return html;
+                }
+            },
+            legend: {
+                data: ['종가', 'MA20', 'MA60'],
+                top: 0,
+                textStyle: {
+                    fontSize: 11,
+                    color: document.body.classList.contains('dark-mode') ? '#94a3b8' : '#64748b'
+                }
+            },
+            grid: {
+                left: '3%',
+                right: '4%',
+                bottom: '15%',
+                top: '15%',
+                containLabel: true
+            },
+            xAxis: {
+                type: 'category',
+                data: dates,
+                axisLine: {
+                    lineStyle: {
+                        color: document.body.classList.contains('dark-mode') ? '#475569' : '#cbd5e1'
+                    }
+                },
+                axisLabel: {
+                    color: document.body.classList.contains('dark-mode') ? '#94a3b8' : '#64748b',
+                    fontSize: 10,
+                    formatter: function(value) {
+                        const date = new Date(value);
+                        return `${date.getMonth() + 1}/${date.getDate()}`;
+                    }
+                }
+            },
+            yAxis: [
+                {
+                    type: 'value',
+                    position: 'left',
+                    axisLine: {
+                        lineStyle: {
+                            color: document.body.classList.contains('dark-mode') ? '#475569' : '#cbd5e1'
+                        }
+                    },
+                    axisLabel: {
+                        color: document.body.classList.contains('dark-mode') ? '#94a3b8' : '#64748b',
+                        fontSize: 10,
+                        formatter: function(value) {
+                            if (value >= 1000000) {
+                                return (value / 1000000).toFixed(1) + 'M';
+                            } else if (value >= 1000) {
+                                return (value / 1000).toFixed(0) + 'K';
+                            }
+                            return value;
+                        }
+                    },
+                    splitLine: {
+                        lineStyle: {
+                            color: document.body.classList.contains('dark-mode') ? 'rgba(71, 85, 105, 0.5)' : '#f1f5f9'
+                        }
+                    }
+                },
+                {
+                    type: 'value',
+                    position: 'right',
+                    axisLine: { show: false },
+                    axisLabel: { show: false },
+                    splitLine: { show: false }
+                }
+            ],
+            dataZoom: [
+                {
+                    type: 'inside',
+                    start: 70,
+                    end: 100
+                }
+            ],
+            series: [
+                {
+                    name: '종가',
+                    type: 'line',
+                    data: prices,
+                    smooth: true,
+                    symbol: 'none',
+                    lineStyle: {
+                        width: 2,
+                        color: '#3b82f6'
+                    },
+                    itemStyle: {
+                        color: '#3b82f6'
+                    },
+                    areaStyle: {
+                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            { offset: 0, color: 'rgba(59, 130, 246, 0.3)' },
+                            { offset: 1, color: 'rgba(59, 130, 246, 0.05)' }
+                        ])
+                    }
+                },
+                {
+                    name: 'MA20',
+                    type: 'line',
+                    data: ma20,
+                    smooth: true,
+                    symbol: 'none',
+                    lineStyle: {
+                        width: 1.5,
+                        color: '#f59e0b'
+                    },
+                    itemStyle: {
+                        color: '#f59e0b'
+                    }
+                },
+                {
+                    name: 'MA60',
+                    type: 'line',
+                    data: ma60,
+                    smooth: true,
+                    symbol: 'none',
+                    lineStyle: {
+                        width: 1.5,
+                        color: '#ec4899'
+                    },
+                    itemStyle: {
+                        color: '#ec4899'
+                    }
+                }
+            ]
+        };
+        
+        chart.setOption(option);
+        
+        // 반응형
+        window.addEventListener('resize', () => {
+            chart.resize();
+        });
+    },
+    
+    updateChartData(ticker, data) {
+        // WebSocket 실시간 업데이트용
+        const chart = this.charts[ticker];
+        if (!chart || !data) return;
+        
+        // 새 데이터 포인트 추가 로직 (필요시 구현)
+        // 현재는 주기적 새로고침으로 대체
+    },
+    
+    refreshAllCharts() {
+        this.customTickers.forEach(item => {
+            this.loadAndRenderChart(item.ticker, `custom-chart-${item.ticker.replace(/\./g, '_')}`);
+        });
+    }
+};
+
+// ========================================
+// Custom Charts 이벤트 위임 (동적 요소)
+// ========================================
+document.addEventListener('click', function(e) {
+    // 삭제 버튼 클릭
+    if (e.target.closest('.custom-chart-header .btn-remove')) {
+        const btn = e.target.closest('.btn-remove');
+        const ticker = btn.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
+        if (ticker) {
+            CustomChartsManager.removeCustomChart(ticker);
+        }
+    }
+});
+
+// ========================================
+// Custom Charts 초기화
+// ========================================
+const originalInitWithCustomCharts = App.init;
+App.init = async function() {
+    await originalInitWithCustomCharts.call(this);
+    CustomChartsManager.init();
+};
+
+// ========================================
+// 앱 초기화 시 WebSocket 연결 및 포트폴리오 로드
+// ========================================
 // 전역 함수 노출 (HTML에서 사용)
 window.SearchManager = SearchManager;
 window.StockCard = StockCard;
 window.WebSocketManager = WebSocketManager;
 window.PortfolioManager = PortfolioManager;
 window.BacktestManager = BacktestManager;
+window.CustomChartsManager = CustomChartsManager;

@@ -1492,3 +1492,227 @@ body {
     margin-left: 0.75rem;
     animation: spin 1s linear infinite;
 }
+
+/* ========================================
+   추가 차트 관리 (Custom Charts)
+   ======================================== */
+.custom-charts-section {
+    margin-top: 3rem;
+}
+
+.custom-charts-card {
+    background: var(--card-bg);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    padding: 1.5rem;
+}
+
+.custom-charts-header {
+    margin-bottom: 1.5rem;
+}
+
+.custom-charts-header h3 {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 0.5rem;
+}
+
+.custom-charts-header h3 i {
+    color: var(--accent-blue);
+}
+
+.section-desc {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+/* 폼 스타일 */
+.custom-charts-form {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.custom-charts-form .form-row {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.custom-charts-form .input-group {
+    display: flex;
+    flex: 1;
+    gap: 0.75rem;
+}
+
+.custom-charts-form input[type="text"] {
+    flex: 1;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--card-bg);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    transition: all 0.2s ease;
+}
+
+.custom-charts-form input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.custom-charts-form .btn-primary {
+    padding: 0.625rem 1rem;
+    white-space: nowrap;
+}
+
+/* 추천 종목 칩 */
+.quick-add-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.quick-add-chips .label {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-right: 0.25rem;
+}
+
+/* 차트 리스트 */
+.custom-charts-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+    gap: 1.5rem;
+}
+
+.custom-chart-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    transition: all 0.3s ease;
+}
+
+.custom-chart-card:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+}
+
+.custom-chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.custom-chart-header .chart-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.custom-chart-header h4 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.custom-chart-header .ticker-badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    font-family: monospace;
+}
+
+.custom-chart-header .btn-remove {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.custom-chart-header .btn-remove:hover {
+    background: var(--accent-red-light);
+    color: var(--accent-red);
+}
+
+.custom-chart-container {
+    width: 100%;
+    height: 300px;
+    padding: 1rem;
+}
+
+.custom-chart-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 2rem;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
+.custom-chart-loading.error {
+    color: var(--accent-red);
+}
+
+/* 빈 상태 */
+.empty-state {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 3rem;
+    color: var(--text-muted);
+}
+
+.empty-state i {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
+
+.empty-state p {
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+
+/* 반응형 */
+@media (max-width: 768px) {
+    .custom-charts-form .form-row {
+        flex-direction: column;
+    }
+    
+    .custom-charts-form .input-group {
+        flex-direction: column;
+    }
+    
+    .quick-add-chips {
+        justify-content: center;
+    }
+    
+    .custom-charts-list {
+        grid-template-columns: 1fr;
+    }
+    
+    .custom-chart-container {
+        height: 250px;
+    }
+}
